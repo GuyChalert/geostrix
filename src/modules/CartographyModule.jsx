@@ -11,6 +11,7 @@
 //     and saved as a new GeoTIFF (nothing imported).
 // Every importer still reprojects INTO the project CRS on import (its Source CRS box); #488 moves those boxes
 // onto the same picker.
+import { confirmDestructive } from "../lib/confirmDestructive.js"; // TASKS.csv #528
 import React, { useMemo, useState } from "react";
 import Papa from "papaparse";
 import { Globe2, Layers, FileSpreadsheet, Loader2, CheckCircle2 } from "../components/icons.js";
@@ -86,12 +87,16 @@ export default function CartographyModule() {
   const [rotate, setRotate] = useState(true);
   const changing = newCrs && Number(newCrs) !== Number(project.epsg);
   const setOnly = () => { setEpsg(Number(newCrs)); setMsg({ ok: true, text: `Project CRS set to ${nameOf(newCrs)}. No coordinates were changed.` }); setNewCrs(null); };
-  const moveAll = () => run(async () => {
+  const moveAll = () => {
+    // TASKS.csv #528 — one click moved every object and cleared Undo, picked from a long list of look-alike names
     const from = project.epsg, to = Number(newCrs);
+    if (!confirmDestructive(`Move every loaded object from ${nameOf(from)} to ${nameOf(to)}?`, { recover: "Undo history is cleared, and moving back re-samples raster images." })) return;
+    return run(async () => {
     const report = await reprojectProjectTo(to, { rotateAzimuths: rotate });
-    setMsg({ ok: true, text: reportText(report, `Moved the project from ${nameOf(from)} to ${nameOf(to)}`) });
+    setMsg({ ok: true, text: `${reportText(report, `Moved the project from ${nameOf(from)} to ${nameOf(to)}`)} Undo history was cleared.` });
     setNewCrs(null);
-  });
+    });
+  };
 
   // ---- reproject a layer pane ----
   const [objKey, setObjKey] = useState("");
