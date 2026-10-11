@@ -330,7 +330,7 @@ export default function StereonetModal({ picks: downholePicks, surfacePicks = []
             <label
               style={{ ...rowLabel, flexDirection: "row", alignItems: "center", gap: 6, color: canTerzaghi ? "#55606e" : "#a8b0ba", cursor: canTerzaghi ? "pointer" : "default" }}
               title={canTerzaghi
-                ? "Terzaghi (1965) correction. Every pick here comes from a drillhole, and a hole intersects structures at a rate proportional to sin(alpha) — so it under-samples anything near-parallel to it and over-samples anything near-perpendicular. This weights each pick by 1/sin(alpha) to undo that, which can genuinely change which orientation reads as dominant."
+                ? "Terzaghi (1965) correction. A drillhole intersects structures at a rate proportional to sin(alpha) — so it under-samples anything near-parallel to it and over-samples anything near-perpendicular. This weights each drillhole pick by 1/sin(alpha) to undo that, which can genuinely change which orientation reads as dominant. Outcrop readings have no hole and keep weight 1; with both sources shown, the drillhole weights are scaled to average 1 so neither population outweighs the other by more than its number of readings."
                 : "Needs each pick's hole attitude at its own depth (collar + survey data for the holes these picks came from)."}
             >
               <input type="checkbox" checked={terzaghiOn && canTerzaghi} disabled={!canTerzaghi} onChange={(e) => setTerzaghiOn(e.target.checked)} /> Terzaghi correction
@@ -340,6 +340,8 @@ export default function StereonetModal({ picks: downholePicks, surfacePicks = []
                 <div style={{ fontWeight: 600, marginBottom: 2 }}>Terzaghi-corrected</div>
                 <div>{stats.terzaghi.weighted} of {stats.n} pick(s) weighted{stats.terzaghi.unweighted ? `; ${stats.terzaghi.unweighted} left at weight 1 (no hole attitude)` : ""}.</div>
                 <div>Effective n = {stats.nEff.toFixed(1)} <span style={{ color: "#9a7c46" }}>(k/α95 use this, not the raw count)</span></div>
+                {/* TASKS.csv #574 — mixed drillhole + outcrop set: say how the two were balanced */}
+                {stats.terzaghi.normalisedMixed && <div style={{ marginTop: 2 }}>Drillhole weights scaled to average 1, so the drillhole picks correct each other without outweighing the {stats.terzaghi.unweighted} unweighted reading(s).</div>}
                 {stats.terzaghi.cappedCount > 0 && (
                   <div style={{ marginTop: 2 }}>
                     {stats.terzaghi.cappedCount} pick(s) hit the ×{stats.terzaghi.maxWeight} weight cap. Anything within {stats.terzaghi.blindZoneDeg.toFixed(1)}° of parallel to its hole is in the blind zone — weighting cannot recover a set no hole ever crossed.

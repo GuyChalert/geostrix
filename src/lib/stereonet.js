@@ -239,6 +239,22 @@ export function terzaghiWeight(alphaDeg, maxWeight = DEFAULT_TERZAGHI_MAX_WEIGHT
   return Math.min(maxWeight, 1 / s);
 }
 
+// TASKS.csv #574 — a MIXED population (drillhole picks with a hole attitude + outcrop / no-hole picks, the
+// stereonet's "Both" source) must not let the correction re-weight one population against the other: 1/sin(alpha)
+// is >= 1, so the drillhole picks used to count up to maxWeight times an outcrop reading and dragged the combined
+// mean toward the drillhole set (a 10 + 10 test: mean pole 225 -> 183 deg with every drillhole alpha equal, i.e.
+// nothing to correct). The Terzaghi weights are therefore rescaled to mean 1 over the weighted picks whenever
+// unweighted ones are present: the correction still acts WITHIN the drillhole population, and each population
+// counts by its number of readings. With drillhole picks only, nothing changes.
+const hasHoleAttitude = (p) => p.holeAz != null && p.holeDip != null && !isNaN(p.holeAz) && !isNaN(p.holeDip);
+function normaliseMixed(weights, isWeighted) {
+  const nW = isWeighted.filter(Boolean).length;
+  if (!nW || nW === isWeighted.length) return false;
+  const mean = weights.reduce((s, w, i) => s + (isWeighted[i] ? w : 0), 0) / nW;
+  weights.forEach((w, i) => { if (isWeighted[i]) weights[i] = w / mean; });
+  return true;
+}
+
 // Shared by fisherStats and kambContourGrid: turn picks into { vecs, weights } in one place so the two
 // can never drift apart on which picks they accept or how they weight them.
 //
@@ -249,7 +265,7 @@ export function terzaghiWeight(alphaDeg, maxWeight = DEFAULT_TERZAGHI_MAX_WEIGHT
 function poleVectorsAndWeights(picks, terzaghi) {
   const on = !!(terzaghi && terzaghi.enabled);
   const maxWeight = (terzaghi && terzaghi.maxWeight) || DEFAULT_TERZAGHI_MAX_WEIGHT;
-  const vecs = [], weights = [];
+  const vecs = [], weights = [], isWeighted = [];
   let weighted = 0, unweighted = 0, cappedCount = 0, minAlpha = Infinity, maxW = 1;
   (picks || []).forEach((p) => {
     if (p.dip == null || p.azimuth == null || isNaN(p.dip) || isNaN(p.azimuth)) return;
@@ -268,11 +284,13 @@ function poleVectorsAndWeights(picks, terzaghi) {
     }
     if (w > maxW) maxW = w;
     weights.push(w);
+    isWeighted.push(on && hasHoleAttitude(p));
   });
+  const normalisedMixed = on && normaliseMixed(weights, isWeighted); // #574
   return {
     vecs, weights,
     terzaghi: on
-      ? { applied: true, maxWeight, minAlphaDeg: minAlpha === Infinity ? null : minAlpha, blindZoneDeg: toDeg(Math.asin(Math.min(1, 1 / maxWeight))), weighted, unweighted, cappedCount, maxAppliedWeight: maxW }
+      ? { applied: true, maxWeight, minAlphaDeg: minAlpha === Infinity ? null : minAlpha, blindZoneDeg: toDeg(Math.asin(Math.min(1, 1 / maxWeight))), weighted, unweighted, cappedCount, maxAppliedWeight: maxW, normalisedMixed }
       : { applied: false },
   };
 }
@@ -408,14 +426,14 @@ export function roseDiagramBins(picks, { binSizeDeg = 10, mode = "strike", terza
   const counts = new Array(nBins).fill(0);
   const on = !!(terzaghi && terzaghi.enabled);
   const maxWeight = (terzaghi && terzaghi.maxWeight) || DEFAULT_TERZAGHI_MAX_WEIGHT;
+  const usable = (picks || []).filter((p) => !(p.dip == null || p.azimuth == null || isNaN(p.dip) || isNaN(p.azimuth)));
+  const isWeighted = usable.map((p) => on && hasHoleAttitude(p));
+  const weights = usable.map((p, i) => (isWeighted[i] ? terzaghiWeight(alphaAngle(p.azimuth, p.dip, p.holeAz, p.holeDip), maxWeight) : 1));
+  normaliseMixed(weights, isWeighted); // #574 — same rule as the stereonet
   let n = 0;
-  (picks || []).forEach((p) => {
-    if (p.dip == null || p.azimuth == null || isNaN(p.dip) || isNaN(p.azimuth)) return;
+  usable.forEach((p, i) => {
     n++;
-    let w = 1;
-    if (on && p.holeAz != null && p.holeDip != null && !isNaN(p.holeAz) && !isNaN(p.holeDip)) {
-      w = terzaghiWeight(alphaAngle(p.azimuth, p.dip, p.holeAz, p.holeDip), maxWeight);
-    }
+    const w = weights[i];
     const base = mode === "dipdir" ? Number(p.azimuth) : Number(p.azimuth) - 90;
     const a = ((base % 360) + 360) % 360;
     counts[Math.min(nBins - 1, Math.floor(a / size))] += w;
