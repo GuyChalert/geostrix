@@ -1193,6 +1193,8 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   useEffect(() => { setToolPane(mode === "targeting" ? "plan" : null); }, [mode]);
   const paneProps = (id) => ({ active: toolPane === id, expanded: toolPane === id, onClick: () => setToolPane((p) => (p === id ? null : id)) }); // expanded: #595
   const paneHeader = (title, icon, tone) => <TaskPaneHeader title={title} icon={icon} tone={tone} onClose={() => setToolPane(null)} />;
+  // TASKS.csv #572 — a modelling pane with nothing to model says what to load, instead of an empty "Choose…" select
+  const emptyPaneHint = (text) => <div role="note" style={{ fontSize: "var(--font-size-sm)", color: "var(--color-warn-text-strong)", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 5, padding: "6px 8px", marginBottom: 8, lineHeight: 1.4 }}>{text}</div>;
   // TASKS.csv #155 — QGIS-style toolbar (view mode only, this pass): which of the Grid/Themes
   // popovers is open, if any. Null closes both. The Database/QC/Boundary-intercepts/Snapshot toolbar
   // buttons don't need this — they trigger the SAME existing modal-open booleans (dbModalOpen etc.)
@@ -7333,6 +7335,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           Uses structure dip/azimuth for orientation when available; if not, estimates one from the
           contact points themselves so it can still run.
         </div>
+        {!litho_units.length && emptyPaneHint("No lithology intervals loaded — import them on the 3D View tab (Add layer › Lithology), or load the sample project.")}
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)", marginBottom: 8, cursor: "pointer" }} title="Also feed drawn cross-section contacts (Draw upper contact, in the section pop-out) tagged as this unit's upper contact into the run as extra interface points">
           <input type="checkbox" checked={includeSectionContacts} onChange={(e) => setIncludeSectionContacts(e.target.checked)} />
           Include drawn cross-section contacts{sections?.some((s) => s.contacts?.length) ? ` (${sections.reduce((n, s) => n + (s.contacts?.length || 0), 0)} drawn)` : ""}
@@ -7366,9 +7369,10 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           <button
             onClick={() => runImplicitModel(implicitTarget)}
             disabled={!implicitTarget || implicitBusy}
+            aria-label="Run the implicit model (GemPy)"
             title="Runs in GeoStrix's Python engine (GemPy) — the status bar's Py shows whether it is ready"
-            style={{ ...pBtn, width: "auto", minWidth: 30, marginBottom: 0, padding: "6px 9px", opacity: implicitTarget && !implicitBusy ? 1 : 0.5, cursor: implicitTarget && !implicitBusy ? "pointer" : "default" }}
-          >{implicitBusy ? <span style={{ fontSize: "var(--font-size-sm)" }}>…</span> : <Layers3 size={14} />}</button>
+            style={{ ...pBtn, width: "auto", minWidth: 30, marginBottom: 0, padding: "6px 9px", whiteSpace: "nowrap", opacity: implicitTarget && !implicitBusy ? 1 : 0.5, cursor: implicitTarget && !implicitBusy ? "pointer" : "default" }}
+          >{implicitBusy ? "Running…" : <><Layers3 size={14} aria-hidden="true" /> Run</>}</button>{/* #572 — was an unlabeled icon */}
         </div>
         {/* TASKS.csv #52 (a) — sensitivity spread. Collapsed by default: it is N+1 GemPy runs, not a
             casual click. Copy says "spread", never "confidence" — see lib/surfaceSpread.js's header. */}
@@ -7420,6 +7424,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           add units below in order, youngest (shallowest) first. Litho-only: veins/dykes cut across a
           stack by nature, so model those with the Structural tool instead, not here.
         </div>
+        {!litho_units.length && emptyPaneHint("No lithology intervals loaded — import them on the 3D View tab (Add layer › Lithology), or load the sample project.")}
         <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
           <select value={stackAdd} onChange={(e) => { addStackUnit(e.target.value); setStackAdd(""); }} style={{ width: 0, flex: 1, background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: 5, padding: "6px 8px", color: "var(--color-text)", fontSize: "var(--font-size-base)" }}>
             <option value="">Add a unit…</option>
@@ -7538,6 +7543,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           style={{ ...pBtn, marginBottom: 8, opacity: (layers.structure || []).length ? 1 : 0.5, cursor: (layers.structure || []).length ? "pointer" : "default" }}
           title="Downhole tadpole plot — depth vs alpha/dip with an azimuth tail, plus lithology and structure-frequency tracks, per hole"
         ><Milestone size={14} /> Downhole structure (tadpole)</button>
+        {!struct_types.length && emptyPaneHint("No structure picks loaded — import downhole structure planes on the 3D View tab (Add layer › Structure planes), or load the sample project.")}
         <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
           <select value={structuralTarget} onChange={(e) => setStructuralTarget(e.target.value)} style={{ width: 0, flex: 1, background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: 5, padding: "6px 8px", color: "var(--color-text)", fontSize: "var(--font-size-base)" }}>
             <option value="">Choose a structure type…</option>
@@ -7546,9 +7552,10 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           <button
             onClick={() => runStructuralModel(structuralTarget)}
             disabled={!structuralTarget || implicitBusy}
+            aria-label="Run the structural model (GemPy)"
             title="Runs in GeoStrix's Python engine (GemPy) — the status bar's Py shows whether it is ready"
-            style={{ ...pBtn, width: "auto", minWidth: 30, marginBottom: 0, padding: "6px 9px", opacity: structuralTarget && !implicitBusy ? 1 : 0.5, cursor: structuralTarget && !implicitBusy ? "pointer" : "default" }}
-          >{implicitBusy ? <span style={{ fontSize: "var(--font-size-sm)" }}>…</span> : <Layers3 size={14} />}</button>
+            style={{ ...pBtn, width: "auto", minWidth: 30, marginBottom: 0, padding: "6px 9px", whiteSpace: "nowrap", opacity: structuralTarget && !implicitBusy ? 1 : 0.5, cursor: structuralTarget && !implicitBusy ? "pointer" : "default" }}
+          >{implicitBusy ? "Running…" : <><Layers3 size={14} aria-hidden="true" /> Run</>}</button>{/* #572 */}
         </div>
 
         </>)}
