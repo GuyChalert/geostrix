@@ -69,6 +69,31 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
     return { xmin: arrMin(xs), xmax: arrMax(xs), ymin: arrMin(ys), ymax: arrMax(ys), zmin: arrMin(zs), zmax: arrMax(zTops) };
   }, [collars, surveyMaxDepth]);
 
+  // TASKS.csv #521 — the grid used to be the COLLAR box in x / y and "collar z minus hole length" in z, as if every
+  // hole were vertical: on Harry 93 of 3,650 composites (2.5%, 3 inclined holes) lay outside it, up to 111 m, and
+  // were never estimated around, while z was padded 45 m below the deepest sample. Now the box of the desurveyed
+  // traces of the holes that carry assays (the grade-shell tool already works from the samples' own box), with the
+  // collar box only as the fallback when nothing can be desurveyed.
+  const traceBounds = useMemo(() => {
+    const assayed = new Set(assays.map((a) => a.hole_id));
+    const byHole = new Map();
+    survey.forEach((s) => { if (!byHole.has(s.hole_id)) byHole.set(s.hole_id, []); byHole.get(s.hole_id).push(s); });
+    let xmin = Infinity, ymin = Infinity, zmin = Infinity, xmax = -Infinity, ymax = -Infinity, zmax = -Infinity, holes = 0;
+    for (const c of collars) {
+      if (assayed.size && !assayed.has(c.hole_id)) continue;
+      let tr = [];
+      try { tr = desurveyHole(c, byHole.get(c.hole_id) || [], desurveyMethod) || []; } catch { tr = []; }
+      if (!tr.length) continue;
+      holes++;
+      for (const p of tr) {
+        if (p.x < xmin) xmin = p.x; if (p.x > xmax) xmax = p.x; if (p.y < ymin) ymin = p.y; if (p.y > ymax) ymax = p.y;
+        if (p.z < zmin) zmin = p.z; if (p.z > zmax) zmax = p.z;
+      }
+    }
+    return holes && Number.isFinite(xmin) ? { xmin, xmax, ymin, ymax, zmin, zmax, holes } : null;
+  }, [assays, collars, survey, desurveyMethod]);
+  const gridBox = traceBounds || collarBounds;
+
   const [padding, setPadding] = useState(25);
   const [cellSize, setCellSize] = useState(10);
   const [method, setMethod] = useState("idw2");
@@ -100,10 +125,10 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
     return (Math.sqrt(variance) / mean) * 100;
   }, [srcAssays, symbol]);
 
-  const bounds = collarBounds ? {
-    xmin: collarBounds.xmin - padding, xmax: collarBounds.xmax + padding,
-    ymin: collarBounds.ymin - padding, ymax: collarBounds.ymax + padding,
-    zmin: collarBounds.zmin - padding, zmax: collarBounds.zmax + padding,
+  const bounds = gridBox ? { // #521 — the traces' box (collar box only as a fallback)
+    xmin: gridBox.xmin - padding, xmax: gridBox.xmax + padding,
+    ymin: gridBox.ymin - padding, ymax: gridBox.ymax + padding,
+    zmin: gridBox.zmin - padding, zmax: gridBox.zmax + padding,
   } : null;
   const gridPreview = bounds ? {
     nx: Math.max(1, Math.round((bounds.xmax - bounds.xmin) / cellSize)),
@@ -169,6 +194,7 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
         // "Add to project"), and travel with the block model into the project file.
         const params = {
           tool: "Grade estimation", element: symbol, method, cellSizeM: cellSize, paddingM: padding,
+          gridFrom: traceBounds ? `desurveyed traces of ${traceBounds.holes} assayed hole(s)` : "collar box (no hole could be desurveyed)", // #521
           searchRadiusM: searchRadius > 0 ? searchRadius : Math.round(gridDiagonal), searchRadiusWasUnlimited: !(searchRadius > 0),
           minSamples, maxSamples, minHoles,
           composited: useComposites, compositeLengthM: useComposites ? compositeLength : null, minCoverage: useComposites ? minCoverage : null,
