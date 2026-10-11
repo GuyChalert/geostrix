@@ -172,7 +172,10 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
           searchRadiusM: searchRadius > 0 ? searchRadius : Math.round(gridDiagonal), searchRadiusWasUnlimited: !(searchRadius > 0),
           minSamples, maxSamples, minHoles,
           composited: useComposites, compositeLengthM: useComposites ? compositeLength : null, minCoverage: useComposites ? minCoverage : null,
-          capValue: Number.isFinite(cap) ? cap : null, capAudit: cap != null ? capAudit(srcAssays, symbol, unit, elementUnits, cap) : null, includeQAQC, // capAudit: #533 domain: domainKey || null, restrictToDomain: restrictToDomain && !!domainKey,
+          capValue: Number.isFinite(cap) ? cap : null, capAudit: cap != null ? capAudit(srcAssays, symbol, unit, elementUnits, cap) : null, includeQAQC, // capAudit: #533
+          // TASKS.csv #529 — the unit of the estimated values and of the cap (an "Au" column could be ppm or ppb); and the
+          // domain fields, which #533's edit had left inside the comment above (estimates since then lacked them)
+          unit, capUnit: cap != null ? unit : null, domain: domainKey || null, restrictToDomain: restrictToDomain && !!domainKey,
           desurveyMethod: desurveyMethod || "minimum curvature", samplePoints: points.length, generatedAt: new Date().toISOString(),
         };
         setResult({ ...est, params, samplePointCount: points.length, droppedCount: dropped, clampedCount: clamped, intervalCount: intervals.length });

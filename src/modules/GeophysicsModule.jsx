@@ -21,6 +21,7 @@ import { boundaryAreaHectares } from "../lib/geoprocessing.js";
 import { saveFile } from "../lib/desktop.js";
 import { blockModelRows, blockModelParamLines } from "../lib/blockModelExport.js"; // TASKS.csv #411
 import { stampLines, withStamp } from "../lib/provenance.js"; // TASKS.csv #404/#411
+import { version as APP_VERSION } from "../../package.json"; // TASKS.csv #529
 import InfoButton from "../components/InfoButton.jsx";
 import { fetchSRTMTerrain, collarGroundMisfit, findBetterUtmZone } from "../lib/srtmFetch.js";
 import { toLonLat, reprojectXY, crsName, pointTransform } from "../lib/reproject.js";
@@ -1590,7 +1591,7 @@ export default function GeophysicsModule() {
           </div>
         )}
         {voxelModels.map((v) => (
-          <VoxelModelRow key={v.id} model={v} onUpdate={updateVoxelModel} onRemove={removeVoxelModel} onEvaluate={evaluateOnHoles} onExportPackage={exportModelPackage} />
+          <VoxelModelRow key={v.id} model={v} onUpdate={updateVoxelModel} onRemove={removeVoxelModel} onEvaluate={evaluateOnHoles} onExportPackage={exportModelPackage} epsg={project?.epsg} />
         ))}
 
         <div style={{ marginTop: 16, fontSize: "var(--font-size-base)", color: "var(--color-text-caption)", lineHeight: 1.6 }}>
@@ -1657,12 +1658,12 @@ export default function GeophysicsModule() {
 // fires continuously during a drag, which would otherwise rebuild the whole 3D mesh on every pixel of
 // movement.
 // TASKS.csv #411 — see blockModelExport.js
-function exportBlockModelCSV(model) {
+function exportBlockModelCSV(model, epsg) {
   const csv = Papa.unparse(blockModelRows(model));
-  const stamp = stampLines({ tool: "Block model export", params: blockModelParamLines(model) });
+  const stamp = stampLines({ tool: "Block model export", version: APP_VERSION, epsg, params: blockModelParamLines(model) }); // #529 — version + CRS
   saveFile({ suggestedName: `${String(model.name || "block_model").replace(/[^\w\- ]/g, "").slice(0, 80)}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }], content: withStamp(csv, stamp), encoding: "text" });
 }
-function VoxelModelRow({ model, onUpdate, onRemove, onEvaluate, onExportPackage }) {
+function VoxelModelRow({ model, onUpdate, onRemove, onEvaluate, onExportPackage, epsg }) {
   const [displayThreshold, setDisplayThreshold] = useState(model.threshold);
   const [displayOpacity, setDisplayOpacity] = useState(model.opacity ?? 0.85);
   const [legendOpen, setLegendOpen] = useState(false);
@@ -1705,7 +1706,7 @@ function VoxelModelRow({ model, onUpdate, onRemove, onEvaluate, onExportPackage 
         {/* TASKS.csv #328 — UBC mesh/model, .obs data, GeoTIFF depth slices and provenance.txt in one zip */}
         {onExportPackage && <PackageOpen role="button" tabIndex={0} onKeyDown={activateOnKey} size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} aria-label={`Export block model "${model.name}" for other software`} title="Export for other software (zip): UBC mesh + model, .obs observed/predicted data (SimPEG inversions), GeoTIFF depth slices, provenance.txt" onClick={() => onExportPackage(model)} />}
         {/* TASKS.csv #411 — block model out for estimation/mine-planning software */}
-        <Download role="button" tabIndex={0} onKeyDown={activateOnKey} size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} aria-label={`Export block model "${model.name}" as CSV`} title="Export as block-model CSV (XC, YC, ZC, XINC, YINC, ZINC, value)" onClick={() => exportBlockModelCSV(model)} />
+        <Download role="button" tabIndex={0} onKeyDown={activateOnKey} size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} aria-label={`Export block model "${model.name}" as CSV`} title="Export as block-model CSV (XC, YC, ZC, XINC, YINC, ZINC, value)" onClick={() => exportBlockModelCSV(model, epsg)} />
         <Trash2 aria-label={`Remove block model "${model.name}"`} title={`Remove block model "${model.name}"`} role="button" tabIndex={0} onKeyDown={activateOnKey} size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} onClick={() => { if (window.confirm(`Remove "${model.name}"?`)) onRemove(model.id); }} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7 }}>
