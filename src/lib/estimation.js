@@ -102,6 +102,7 @@ export function estimateBlockModel(samplePoints, opts) {
   const cells = [];
   let blocksSkipped = 0;
   let singleHoleCells = 0; // TASKS.csv #258 — surfaced in the run summary
+  const mlsCounts = { full: 0, reduced: 0, idw: 0 }; // TASKS.csv #516
   const supportCounts = { interpolated: 0, extrapolated: 0, unsupported: 0, searchLimited: 0 };
 
   for (let iz = 0; iz < nz; iz++) {
@@ -113,6 +114,7 @@ export function estimateBlockModel(samplePoints, opts) {
         const r = est(cx, cy, cz);
         if (!r) { blocksSkipped++; if (wantSupport) supportCounts.unsupported++; continue; } // no estimate IS the unsupported class
         if (r.nHoles === 1) singleHoleCells++;
+        if (r.mlsMode) mlsCounts[r.mlsMode]++; // #516
         const cell = { x: cx, y: cy, z: cz, dx, dy, dz, value: r.value, nSamples: r.nSamples, nHoles: r.nHoles };
         if (r.support) {
           cell.support = r.support.cls;
@@ -126,7 +128,7 @@ export function estimateBlockModel(samplePoints, opts) {
     }
     opts.onProgress?.((iz + 1) / nz); // #520 — once per z-slice (the estimation worker relays it)
   }
-  return { cells, blocksEstimated: cells.length, blocksSkipped, singleHoleCells, grid: { nx, ny, nz }, supportCounts: wantSupport ? supportCounts : null };
+  return { cells, blocksEstimated: cells.length, blocksSkipped, singleHoleCells, grid: { nx, ny, nz }, supportCounts: wantSupport ? supportCounts : null, mlsCounts: method === "mls1" ? mlsCounts : null };
 }
 
 // TASKS.csv #142 — the grid sizing + per-cell NN/IDW math shared by estimateBlockModel (sparse cell
@@ -332,7 +334,7 @@ function makeCellEstimator(samplePoints, opts = {}) {
     for (let i = 0; i < used.length; i++) holes.add(used[i].hole_id);
     if (holes.size < minHoles) return null;
 
-    let value;
+    let value, mlsMode = null;
     if (method === "nn") {
       value = used[0].value; // nearest-neighbour
     } else {
@@ -340,14 +342,19 @@ function makeCellEstimator(samplePoints, opts = {}) {
       if (exact) {
         value = exact.value; // every non-NN method here is an EXACT interpolator at a sample position
       } else if (method === "mls1") {
-        value = mlsLinear(used, cx, cy, cz);
-        if (value == null) value = idwValue(used, 2); // degenerate geometry — fall back to IDW²
+        // TASKS.csv #516 — rank-deficient neighbourhoods (every sample on one section plane, or one line) used to
+        // fall back to IDW² silently; now the trend is fitted inside the samples' own plane / line, and only a
+        // truly degenerate neighbourhood falls back — counted either way (mlsMode) for the run summary.
+        const m = mlsLinear(used, cx, cy, cz);
+        if (m) { value = m.value; mlsMode = m.rank === 3 ? "full" : "reduced"; }
+        else { value = idwValue(used, 2); mlsMode = "idw"; }
       } else {
         value = idwValue(used, power);
       }
     }
     if (value == null || !Number.isFinite(value)) return null;
     const out = { value, nSamples: used.length, nHoles: holes.size };
+    if (mlsMode) out.mlsMode = mlsMode; // #516
     if (wantSupport) out.support = supportFrom(candidates, used, holes, cx, cy, cz, bracketTol, bracketMax, opts.searchRadius);
     return out;
   };
@@ -562,7 +569,7 @@ function idwValue(used, power) {
 // The result is clamped to [min, max] of the samples used: an unclamped local plane will happily
 // extrapolate a negative grade, or a grade above anything ever assayed, at the edge of a neighbourhood.
 function mlsLinear(used, cx, cy, cz) {
-  if (used.length < 4) return null;
+  if (used.length < 4) return mlsReduced(used, cx, cy, cz); // #516 — too few for a 3D plane; maybe enough in-plane
   // Normal equations for the 4-parameter model, built directly (M is 4x4 symmetric).
   const M = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   const rhs = [0, 0, 0, 0];
@@ -582,10 +589,89 @@ function mlsLinear(used, cx, cy, cz) {
     if (m > scale) scale = m;
   }
   const sol = solve4(M, rhs, scale);
-  if (sol == null) return null;
+  if (sol == null) return mlsReduced(used, cx, cy, cz); // #516 — rank-deficient: fit within the samples' subspace
   const a = sol[0];
   if (!Number.isFinite(a)) return null;
-  return a < vMin ? vMin : a > vMax ? vMax : a;
+  return { value: a < vMin ? vMin : a > vMax ? vMax : a, rank: 3 };
+}
+
+// TASKS.csv #516 — the linear trend fitted inside the samples' OWN subspace when they don't span 3D: holes drilled
+// on one section give coplanar samples, and the 4-parameter fit is singular whatever the data. The weighted
+// spread of the sample offsets is eigen-decomposed (3x3 Jacobi); axes with real spread are kept (a plane = 2, a
+// line = 1) and the value is fitted as v = a + Σ g_k (offset · axis_k) — `a` is the trend's value at the cell's
+// projection onto the samples' plane / line (nothing can be said about the trend across it). Rank 0 (all samples
+// at one point) returns null -> IDW².
+function mlsReduced(used, cx, cy, cz) {
+  const n = used.length;
+  if (n < 2) return null;
+  let W = 0; const m = [0, 0, 0];
+  const off = used.map((s) => [s.p.x - cx, s.p.y - cy, s.p.z - cz]);
+  const w = used.map((s) => s.len / s.d2);
+  for (let i = 0; i < n; i++) { W += w[i]; for (let k = 0; k < 3; k++) m[k] += w[i] * off[i][k]; }
+  for (let k = 0; k < 3; k++) m[k] /= W;
+  const C = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < n; i++) for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) C[r * 3 + c] += w[i] * (off[i][r] - m[r]) * (off[i][c] - m[c]) / W;
+  const { values, vectors } = jacobiEigen3(C);
+  const top = Math.max(...values);
+  if (!(top > 0)) return null;
+  const axes = [0, 1, 2].filter((k) => values[k] > 1e-6 * top).sort((a, b) => values[b] - values[a]).slice(0, 2).map((k) => [vectors[k * 3], vectors[k * 3 + 1], vectors[k * 3 + 2]]);
+  const k = axes.length, dim = k + 1;
+  if (n < dim) return null;
+  const M = new Array(dim * dim).fill(0), rhs = new Array(dim).fill(0);
+  let vMin = Infinity, vMax = -Infinity, scale = 0;
+  for (let i = 0; i < n; i++) {
+    const b = [1, ...axes.map((ax) => off[i][0] * ax[0] + off[i][1] * ax[1] + off[i][2] * ax[2])];
+    for (let r = 0; r < dim; r++) { for (let c = 0; c < dim; c++) M[r * dim + c] += w[i] * b[r] * b[c]; rhs[r] += w[i] * b[r] * used[i].value; }
+    const v = used[i].value; if (v < vMin) vMin = v; if (v > vMax) vMax = v;
+    for (let j = 1; j < dim; j++) scale = Math.max(scale, Math.abs(b[j]));
+  }
+  const sol = solveN(M, rhs, dim, scale);
+  if (!sol || !Number.isFinite(sol[0])) return null;
+  const a = sol[0];
+  return { value: a < vMin ? vMin : a > vMax ? vMax : a, rank: k };
+}
+
+// symmetric 3x3 eigen-decomposition (cyclic Jacobi); vectors are the columns k -> vectors[k*3 .. k*3+2]
+function jacobiEigen3(S) {
+  const A = S.slice(), V = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  for (let sweep = 0; sweep < 50; sweep++) {
+    const off = Math.abs(A[1]) + Math.abs(A[2]) + Math.abs(A[5]);
+    if (off < 1e-14 * (Math.abs(A[0]) + Math.abs(A[4]) + Math.abs(A[8]) + 1e-300)) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      const apq = A[p * 3 + q];
+      if (Math.abs(apq) < 1e-300) continue;
+      const theta = (A[q * 3 + q] - A[p * 3 + p]) / (2 * apq);
+      const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 3; k++) { const akp = A[k * 3 + p], akq = A[k * 3 + q]; A[k * 3 + p] = c * akp - s * akq; A[k * 3 + q] = s * akp + c * akq; }
+      for (let k = 0; k < 3; k++) { const apk = A[p * 3 + k], aqk = A[q * 3 + k]; A[p * 3 + k] = c * apk - s * aqk; A[q * 3 + k] = s * apk + c * aqk; }
+      for (let k = 0; k < 3; k++) { const vkp = V[k * 3 + p], vkq = V[k * 3 + q]; V[k * 3 + p] = c * vkp - s * vkq; V[k * 3 + q] = s * vkp + c * vkq; }
+    }
+  }
+  return { values: [A[0], A[4], A[8]], vectors: [V[0], V[3], V[6], V[1], V[4], V[7], V[2], V[5], V[8]] };
+}
+
+// Gaussian elimination with partial pivoting, n x n (n <= 3 here); singular -> null (same threshold idea as solve4)
+function solveN(Min, rhs, n, scale) {
+  const A = Min.slice(), b = rhs.slice();
+  const tol = 1e-9 * Math.max(1, Math.abs(A[0])) * Math.max(1e-6, scale * scale);
+  for (let col = 0; col < n; col++) {
+    let piv = col, best = Math.abs(A[col * n + col]);
+    for (let r = col + 1; r < n; r++) { const v = Math.abs(A[r * n + col]); if (v > best) { best = v; piv = r; } }
+    if (!(best > tol)) return null;
+    if (piv !== col) {
+      for (let c = 0; c < n; c++) { const t = A[col * n + c]; A[col * n + c] = A[piv * n + c]; A[piv * n + c] = t; }
+      const t = b[col]; b[col] = b[piv]; b[piv] = t;
+    }
+    for (let r = col + 1; r < n; r++) {
+      const f = A[r * n + col] / A[col * n + col];
+      for (let c = col; c < n; c++) A[r * n + c] -= f * A[col * n + c];
+      b[r] -= f * b[col];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) { let s = b[r]; for (let c = r + 1; c < n; c++) s -= A[r * n + c] * x[c]; x[r] = s / A[r * n + r]; }
+  return x;
 }
 
 // Gaussian elimination with partial pivoting on a 4x4 system. `scale` is the neighbourhood's own

@@ -204,6 +204,7 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
           unit, capUnit: cap != null ? unit : null, domain: domainKey || null, restrictToDomain: restrictToDomain && !!domainKey,
           desurveyMethod: desurveyMethod || "minimum curvature", samplePoints: points.length, generatedAt: new Date().toISOString(),
         };
+        if (est.mlsCounts) params.mlsBlocks = est.mlsCounts; // #516 — how the linear trend was fitted
         setResult({ ...est, params, samplePointCount: points.length, droppedCount: dropped, clampedCount: clamped, intervalCount: intervals.length });
         setAdded(false); setAddedSupport(false); // a fresh run invalidates both "Added ✓" states
       } catch (e) {
@@ -425,6 +426,14 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
               <div>{result.samplePointCount} sample point(s) placed ({result.intervalCount} interval(s), {result.droppedCount} dropped — no collar/survey to place them{result.clampedCount ? `; ${result.clampedCount} negative grade(s) clamped to zero` : ""}).</div>
               <div>{result.blocksEstimated.toLocaleString()} block(s) estimated, {result.blocksSkipped.toLocaleString()} left un-estimated (no sample within search radius / below min-samples / below min distinct holes).</div>
               {/* TASKS.csv #258 */}
+              {/* TASKS.csv #516 — say how MLS (linear) actually ran */}
+              {result.mlsCounts && (result.mlsCounts.reduced + result.mlsCounts.idw) > 0 && (
+                <div style={{ color: "var(--color-text-secondary)" }}>
+                  MLS (linear): {result.mlsCounts.full.toLocaleString()} block(s) with a full 3D trend
+                  {result.mlsCounts.reduced ? `, ${result.mlsCounts.reduced.toLocaleString()} with the trend fitted in the plane / line of their samples (e.g. holes on one section — nothing is known about the trend across it)` : ""}
+                  {result.mlsCounts.idw ? `, ${result.mlsCounts.idw.toLocaleString()} fell back to IDW² (their samples gave no direction to fit)` : ""}.
+                </div>
+              )}
               {result.singleHoleCells > 0 && (
                 <div style={{ color: "var(--color-warn-text)" }}>
                   {result.singleHoleCells.toLocaleString()} of the estimated blocks ({((result.singleHoleCells / Math.max(1, result.blocksEstimated)) * 100).toFixed(0)}%) were informed by only ONE drillhole — continuity there is asserted, not demonstrated. Raise "Min distinct holes per block" to exclude them.
