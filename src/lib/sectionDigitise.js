@@ -9,19 +9,26 @@
 // strings: every logged interval boundary (top and base) of any layer.
 // A unit's top only where the unit STARTS: a row that continues the same unit from the row above (a logging split,
 // e.g. VCL 1.9-18.0 then VCL 18.0-20.5) is not a contact — the modeller skips those too (useModelling).
-export function snapTargets(intervals, { unit, kind }) {
+// TASKS.csv #569 — with `holes` ([{ hole_id, trace }]) an interval whose trace RISES from `from` to `to` (an
+// up-hole) has its top at `to`, and continues the unit when the next row along the hole is the same unit.
+export function snapTargets(intervals, { unit, kind, holes = null }) {
   const out = new Map();
   if (kind === "contact") {
     const want = `Lithology: ${unit}`;
     const byHole = new Map();
     for (const iv of intervals || []) if (iv.layer === "litho") { if (!byHole.has(iv.hole_id)) byHole.set(iv.hole_id, []); byHole.get(iv.hole_id).push(iv); }
+    const traceOf = new Map((holes || []).map((h) => [h.hole_id, h.trace]));
     for (const rows of byHole.values()) {
       rows.sort((a, b) => a.from - b.from);
       rows.forEach((iv, i) => {
         if (iv.label !== want) return;
-        const prev = rows[i - 1];
-        if (prev && prev.label === want && Math.abs(prev.to - iv.from) < 1e-6) return; // same unit continues
-        out.set(`${iv.hole_id}|${iv.from}`, { hole_id: iv.hole_id, md: iv.from, label: iv.label });
+        const tr = traceOf.get(iv.hole_id);
+        const zf = tr ? traceAt(tr, iv.from)?.z : NaN, zt = tr ? traceAt(tr, iv.to)?.z : NaN;
+        const upHole = Number.isFinite(zf) && Number.isFinite(zt) && zt > zf + 1e-6;
+        const nb = upHole ? rows[i + 1] : rows[i - 1];
+        if (nb && nb.label === want && Math.abs(upHole ? nb.from - iv.to : nb.to - iv.from) < 1e-6) return; // same unit continues
+        const md = upHole ? iv.to : iv.from;
+        out.set(`${iv.hole_id}|${md}`, { hole_id: iv.hole_id, md, label: iv.label });
       });
     }
     return [...out.values()];

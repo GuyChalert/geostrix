@@ -21,7 +21,7 @@ import { compositeDownhole, capAudit, capAuditText } from "../../lib/geochem.js"
 import { excludeQAQC } from "../../lib/qaqc.js";
 import { errorNotice } from "../../lib/notices.js";
 import { searchEllipsoidBasis, filterBySearchSupport, anisoScales, anisoWarpPoint, invScales, anisoWarpDirection, medianCollarSpacing, autoHaloParams, splitIntervalForSampling, spatialClusters, sampleTerrainElevation } from "../../lib/viewer/geomath.js";
-import { intervalEndIndex, continuesUnitAbove, mergeTouchingIntervals } from "../../lib/viewer/intervals.js";
+import { intervalEndIndex, intervalStartIndex, upperContactOf, mergeTouchingIntervals } from "../../lib/viewer/intervals.js";
 import { codedRuns, topsForCode, codeInfo, withPileOrder, effectiveCode } from "../../lib/modellingCodes.js"; // TASKS.csv #599
 import { findOnTraceWorld, findOnTrace, interceptId, SOFT_NUGGET, MODEL_EXTENT_PAD_M, guessSurfaceType, pointInDomain } from "../../lib/viewer/modelHelpers.js";
 
@@ -555,18 +555,20 @@ export function useModelling(ctx) {
     // and (c)'s named sets could not have contained one at all. Listing it closes both gaps at once.
     [["litho", "Lithology"], ["alt", "Alteration"], ["vein", "Vein / dyke"]].forEach(([layerKey, layerLabel]) => {
       const ends = intervalEndIndex(layers[layerKey]); // #354 — skip row splits inside one unit
+      const starts = intervalStartIndex(layers[layerKey]); // #569 — up-holes: the top is at `to`
       (layers[layerKey] || []).forEach((r) => {
         if (isNaN(r.from)) return;
-        if (continuesUnitAbove(ends, r, new Set([r.value]))) return;
         const t = traces.find((tr) => tr.hole_id === r.hole_id);
         if (!t) return;
-        const p = findOnTrace(t.pts, r.from);
+        const top = upperContactOf(r, (md) => findOnTrace(t.pts, md)?.y, { startIndex: starts, endIndex: ends, codes: new Set([r.value]) });
+        if (top.continues) return;
+        const p = findOnTrace(t.pts, top.md);
         if (!p) return;
         const api = sceneToApi(p);
         // TASKS.csv #232 — api coords are origin-relative (see sceneToApi's own comment); add the
         // scene origin back in so the table/CSV export shows real-world E/N/Z, matching what the
         // mesh-export path (meshExport.js's sceneVertsToWorld) already does for the same conversion.
-        out.push({ id: interceptId(layerKey, r), layerKey, layerLabel, hole_id: r.hole_id, unit: r.value, from: r.from, x: api.x + o.x, y: api.y + o.y, z: api.z + o.z });
+        out.push({ id: interceptId(layerKey, r), layerKey, layerLabel, hole_id: r.hole_id, unit: r.value, from: top.md, x: api.x + o.x, y: api.y + o.y, z: api.z + o.z });
       });
     });
     return out;
@@ -599,7 +601,8 @@ export function useModelling(ctx) {
     // continues the unit. For a lithology GROUP that also drops the internal AND/BAS boundaries between
     // member codes, which are not contacts of the grouped unit either.
     const litEnds = intervalEndIndex(layers.litho);
-    let splitsSkipped = 0;
+    const litStarts = intervalStartIndex(layers.litho); // #569 — for up-holes
+    let splitsSkipped = 0, upHolePicks = 0;
     if (isMcode) {
       // a stack's own order is the pile order for codes the code list hasn't placed
       const mc = withPileOrder(modellingCodes, pileOrder); // roles of every code kept (the first version dropped unplaced codes' roles)
@@ -625,8 +628,11 @@ export function useModelling(ctx) {
       if (!silent || why.length) setNotices((p) => [...p, `${unitName}: ${tops.length} contact(s) where it starts below a younger stratigraphic unit.${why.length ? ` Not used as contacts: ${why.join("; ")}.` : ""}`]);
     }
     if (!isMcode) traces.forEach((t) => {
+      const zAt = (md) => findOnTrace(t.pts, md)?.y; // scene y = elevation
       (layers.litho || []).filter((r) => r.hole_id === t.hole_id && codes.has(r.value) && !isNaN(r.from)).forEach((r) => {
-        if (continuesUnitAbove(litEnds, r, codes)) { splitsSkipped++; return; }
+        // TASKS.csv #569 — the upper contact is at `to` in a rising (up-hole) interval
+        const top = upperContactOf(r, zAt, { startIndex: litStarts, endIndex: litEnds, codes });
+        if (top.continues) { splitsSkipped++; return; }
         // TASKS.csv #84 — a boundary intercept the user has explicitly reviewed and excluded (via the
         // Boundary intercepts table) never feeds a modelling run, same as if the row didn't exist.
         if (excludedIntercepts.includes(interceptId("litho", r))) return;
@@ -635,8 +641,9 @@ export function useModelling(ctx) {
         // basalt and the lower basalt are the same logged code, so without this every pick of that code
         // across the property is forced onto one surface no matter how many times the unit repeats.
         if (!interceptInActiveSet(interceptId("litho", r))) return;
-        const p = findOnTrace(t.pts, r.from);
+        const p = findOnTrace(t.pts, top.md);
         if (p && (!domain || pointInDomain(p, domain, implicitMeshesRef.current))) {
+          if (top.upHole) upHolePicks++;
           const api = sceneToApi(p);
           if (softIntercepts.includes(interceptId("litho", r))) api.nugget = SOFT_NUGGET;
           // TASKS.csv #275 — which logged code this point came from, so the group coherence check below
@@ -661,6 +668,7 @@ export function useModelling(ctx) {
     // that surface, no separate matching step. Domain-filtered the same way litho points are, so a
     // contact drawn outside the active modelling domain doesn't leak into a run scoped to exclude it.
     if (splitsSkipped && !silent) setNotices((p) => [...p, `${unitName}: ${splitsSkipped} interval start(s) inside the unit (the row above in the same hole is the same ${isGroup ? "group" : "unit"}) were not used as contacts.`]);
+    if (upHolePicks && !silent) setNotices((p) => [...p, `${unitName}: ${upHolePicks} contact(s) are in holes drilled upward there — the unit's top was taken at the interval's deeper end (to), which is the higher one.`]); // #569
     let sectionContactCount = 0;
     if (includeSectionContacts) {
       const o = originRef.current;

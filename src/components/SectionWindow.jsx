@@ -149,7 +149,7 @@ export default function SectionWindow() {
   const editPoints = (id, fn) => setContacts((p) => p.map((c) => (c.id === id ? { ...c, points: fn(c.points) } : c)));
   // what a click snaps to: the drawn / edited string's unit tops (contacts) or every logged boundary (faults, strings)
   const editing = contacts.find((c) => c.id === editingId) || null;
-  const targets = useMemo(() => snapTargets(data?.intervals, editing ? { unit: editing.unit, kind: editing.kind || "contact" } : { unit: unitPick, kind: kindPick }), [data?.intervals, editing, unitPick, kindPick]);
+  const targets = useMemo(() => snapTargets(data?.intervals, editing ? { unit: editing.unit, kind: editing.kind || "contact", holes: data?.holes } : { unit: unitPick, kind: kindPick, holes: data?.holes }), [data?.intervals, data?.holes, editing, unitPick, kindPick]); // holes: #569 up-holes
 
   // TASKS.csv #395 — ground elevation at distance l along the section, from the terrain profile.
   const groundAt = (l) => {
