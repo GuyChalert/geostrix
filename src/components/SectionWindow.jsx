@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Camera, Pencil, Check, Undo2, X, Save, Download, FileText, Crosshair } from "./icons.js";
 import { onSectionData, getSectionData, sendSectionSnapshot, sendSectionContacts, saveFile, savePDF } from "../lib/desktop.js";
 import { solveOrientationToTarget } from "../lib/holePlanning.js"; // TASKS.csv #395
+import { snapTargets, snapClick, moveVertex, deleteVertex, insertVertex, nearestSegment } from "../lib/sectionDigitise.js"; // TASKS.csv #519
 import { activateOnKey } from "../lib/a11y.js"; // TASKS.csv #238 — Enter/Space on clickable non-button elements
 
 const SECTION_W = 1100, SECTION_H = 660;
@@ -33,6 +34,9 @@ export default function SectionWindow() {
   // different visible-hole set intact, unlike screen-relative fractions would.
   const [contacts, setContacts] = useState([]);
   const [drawing, setDrawing] = useState(false);
+  // TASKS.csv #519 — snap clicks to the logged contacts / traces, and edit a finished string's vertices
+  const [snapOn, setSnapOn] = useState(true);
+  const [editingId, setEditingId] = useState(null);
   const [drawPoints, setDrawPoints] = useState([]);
   // TASKS.csv #395 — design a planned hole on the section: click the collar (snapped to the ground
   // profile when the section has one), then the target. holePlanning's solver turns the two world
@@ -141,7 +145,11 @@ export default function SectionWindow() {
     setContacts((p) => [...p, { id, unit: unitPick, kind: kindPick, isUpperContact: kindPick === "contact", color: kindPick === "fault" ? "#d9534f" : hashColor(unitPick), points: drawPoints }]);
     setDrawing(false); setDrawPoints([]);
   };
-  const removeContact = (id) => setContacts((p) => p.filter((c) => c.id !== id));
+  const removeContact = (id) => { setContacts((p) => p.filter((c) => c.id !== id)); if (editingId === id) setEditingId(null); };
+  const editPoints = (id, fn) => setContacts((p) => p.map((c) => (c.id === id ? { ...c, points: fn(c.points) } : c)));
+  // what a click snaps to: the drawn / edited string's unit tops (contacts) or every logged boundary (faults, strings)
+  const editing = contacts.find((c) => c.id === editingId) || null;
+  const targets = useMemo(() => snapTargets(data?.intervals, editing ? { unit: editing.unit, kind: editing.kind || "contact" } : { unit: unitPick, kind: kindPick }), [data?.intervals, editing, unitPick, kindPick]);
 
   // TASKS.csv #395 — ground elevation at distance l along the section, from the terrain profile.
   const groundAt = (l) => {
@@ -264,6 +272,9 @@ export default function SectionWindow() {
               <button onClick={cancelDrawing} style={btnStyle(false)}><X size={14} /> Cancel</button>
             </>
           )}
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#55606e" }} title="Clicks within ~12 px of a hole snap to the chosen unit's logged top (any logged boundary for faults / strings), else to the trace; the snapped vertex keeps the hole's exact position and depth (square marker)">
+            <input type="checkbox" checked={snapOn} onChange={(e) => setSnapOn(e.target.checked)} /> Snap to holes
+          </label>
           <button onClick={saveContacts} disabled={!contacts.length && !drawing} style={{ ...btnStyle(saved), opacity: contacts.length || drawing ? 1 : 0.5 }}>
             <Save size={14} /> {saved ? "Saved ✓" : "Save contacts"}
           </button>
@@ -312,15 +323,18 @@ export default function SectionWindow() {
           {contacts.map((c) => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", background: "#f4f5f7", border: "1px solid #d9dce1", borderRadius: 12, fontSize: 10.5 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: c.color, display: "inline-block" }} />
-              {c.unit} <span style={{ color: "#65717e" }}>(upper contact)</span>
-              <X role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label="Close" size={12} style={{ cursor: "pointer", color: "#8a5555" }} onClick={() => removeContact(c.id)} />
+              {c.unit} <span style={{ color: "#65717e" }}>({c.kind === "fault" ? "fault" : c.kind === "string" ? "string" : "upper contact"}, {c.points.length} pts)</span>
+              <Pencil role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label={`Edit the vertices of ${c.unit}`} size={12} style={{ cursor: "pointer", color: editingId === c.id ? "#b06a1f" : "#55606e" }} onClick={() => { setDrawing(false); setEditingId(editingId === c.id ? null : c.id); }}><title>Edit vertices: drag to move, Alt-click to delete, click the line to insert</title></Pencil>
+              <X role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label={`Remove ${c.unit}`} size={12} style={{ cursor: "pointer", color: "#8a5555" }} onClick={() => removeContact(c.id)} />
             </div>
           ))}
         </div>
       )}
 
       <div className="ge-section-body" style={{ flex: 1, overflow: "auto", padding: 16 }}>
-        <SectionSVG data={planAdded.length ? { ...data, plannedHoles: [...(data.plannedHoles || []), ...planAdded] } : data} svgRef={svgRef} contacts={contacts} drawing={drawing || planning} drawPoints={drawPoints} onAddPoint={(pt) => (planning ? addPlanPoint(pt) : setDrawPoints((p) => [...p, pt]))} vExag={vExag} geomRef={geomRef} planPts={planning ? planPts : []} />
+        {editingId && <div style={{ fontSize: 11, color: "#b06a1f", marginBottom: 6 }}>Editing "{editing?.unit}": drag a vertex to move it, Alt-click a vertex to delete it, click the line to insert one{snapOn ? " (snapping to holes)" : ""}. Click the pencil again to finish; Save contacts keeps the changes.</div>}
+        <SectionSVG data={planAdded.length ? { ...data, plannedHoles: [...(data.plannedHoles || []), ...planAdded] } : data} svgRef={svgRef} contacts={contacts} drawing={drawing || planning} drawPoints={drawPoints} onAddPoint={(pt) => (planning ? addPlanPoint(pt) : setDrawPoints((p) => [...p, pt]))} vExag={vExag} geomRef={geomRef} planPts={planning ? planPts : []}
+          snap={snapOn && !planning ? targets : null} editingId={editingId} onEditPoints={editPoints} />
       </div>
     </div>
   );
@@ -331,7 +345,8 @@ function btnStyle(active) {
 }
 const selectStyle = { padding: "5px 8px", background: "#f4f5f7", border: "1px solid #d9dce1", borderRadius: 6, color: "#1a2028", fontSize: 11.5 };
 
-function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, vExag, geomRef, planPts = [] }) {
+function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, vExag, geomRef, planPts = [], snap = null, editingId = null, onEditPoints }) {
+  const dragRef = useRef(null); // #519 — the vertex being dragged (before the early return: a hook)
   const { holes = [], section, intervals = [], points = [], planes = [], elevationProfile = null, voxelSlices = [], surfaceTraces = [], plannedHoles = [], title = "" } = data;
   const W = SECTION_W, PAD = 60;
   if (!section) return null;
@@ -393,21 +408,46 @@ function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, v
   const labelledAssays = new Set();
   Object.keys(assayMax).forEach((sym) => points.filter((r) => r.assay?.sym === sym).sort((x, y) => y.assay.value - x.assay.value).slice(0, 8).forEach((r) => labelledAssays.add(r)));
 
-  const handleClick = (e) => {
-    if (!drawing) return;
-    const svg = e.currentTarget;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
+  // TASKS.csv #519 — screen -> section point, snapped to a hole when snapping is on
+  const localOf = (e) => {
+    const svg = svgRef?.current || e.currentTarget?.ownerSVGElement || e.currentTarget;
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
     const ctm = svg.getScreenCTM();
-    if (!ctm) return;
-    const local = pt.matrixTransform(ctm.inverse());
+    return ctm ? pt.matrixTransform(ctm.inverse()) : null;
+  };
+  const pointAt = (local) => {
+    if (snap) {
+      const s = snapClick({ sx: local.x, sy: local.y }, { holes, targets: snap, toScreen: (x, y, z) => [sx(along(x, y)), sz(z)], along, radius: 12 });
+      if (s) return s;
+    }
     const l = Math.max(0, Math.min(maxL, invSx(local.x)));
     const z = invSz(local.y);
-    onAddPoint({ l, z, x: ax + l * ux, y: ay + l * uy });
+    return { l, z, x: ax + l * ux, y: ay + l * uy };
+  };
+  const handleClick = (e) => {
+    if (!drawing) return;
+    const local = localOf(e);
+    if (!local) return;
+    onAddPoint(pointAt(local));
+  };
+  const handleMove = (e) => {
+    const d = dragRef.current;
+    if (!d || !(e.buttons & 1)) return;
+    const local = localOf(e);
+    if (local) { d.moved = true; const pt = pointAt(local); onEditPoints(d.id, (pts) => moveVertex(pts, d.i, pt)); }
+  };
+  const handleUp = () => { dragRef.current = null; };
+  const insertAt = (c, e) => {
+    if (c.id !== editingId) return;
+    e.stopPropagation();
+    const local = localOf(e);
+    if (!local) return;
+    const seg = nearestSegment(c.points, (p) => [sx(p.l), sz(p.z)], { sx: local.x, sy: local.y }, 8);
+    if (seg >= 0) { const pt = pointAt(local); onEditPoints(c.id, (pts) => insertVertex(pts, seg, pt)); }
   };
 
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ background: "#ffffff", borderRadius: 8, cursor: drawing ? "crosshair" : "default" }} onClick={handleClick}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ background: "#ffffff", borderRadius: 8, cursor: drawing ? "crosshair" : "default" }} onClick={handleClick} onMouseMove={handleMove} onMouseUp={handleUp} onMouseLeave={handleUp}>
       <defs>
         <clipPath id="sectionPlotArea"><rect x={PAD} y={PAD} width={W - 2 * PAD} height={H - 2 * PAD} /></clipPath>
       </defs>
@@ -604,10 +644,31 @@ function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, v
 
       {/* User-drawn interpreted contacts (TASKS.csv) — rendered on top of everything else so they're
           always visible while sketching over the drillhole data. */}
+      {/* TASKS.csv #519 — the nearest parallel sections' strings, ghosted (projected onto this section) */}
+      {(data.ghostStrings || []).map((g) => g.strings.filter((st) => st.points.length > 1).map((st, i) => (
+        <g key={`${g.sectionId}_${i}`} opacity="0.4">
+          <polyline points={st.points.map((p) => `${sx(p.l)},${sz(p.z)}`).join(" ")} fill="none" stroke={st.color || "#7a8494"} strokeWidth="1.6" strokeDasharray="2 3" />
+          <text x={sx(st.points[st.points.length - 1].l) + 4} y={sz(st.points[st.points.length - 1].z)} fill={st.color || "#7a8494"} fontSize="9">{`${st.unit} — ${g.sectionName} (${g.offset > 0 ? "+" : ""}${Math.round(g.offset)} m)`}</text>
+        </g>
+      )))}
       {contacts.map((c) => (
         <g key={c.id}>
-          <polyline points={c.points.map((p) => `${sx(p.l)},${sz(p.z)}`).join(" ")} fill="none" stroke={c.color} strokeWidth="2.5" strokeDasharray="6 3" />
-          {c.points.map((p, i) => <circle key={i} cx={sx(p.l)} cy={sz(p.z)} r="2.5" fill={c.color} />)}
+          {/* a wide transparent hit line: clicking it inserts a vertex while this string is being edited */}
+          {c.id === editingId && <polyline points={c.points.map((p) => `${sx(p.l)},${sz(p.z)}`).join(" ")} fill="none" stroke="transparent" strokeWidth="10" style={{ cursor: "copy" }} onClick={(e) => insertAt(c, e)} />}
+          <polyline points={c.points.map((p) => `${sx(p.l)},${sz(p.z)}`).join(" ")} fill="none" stroke={c.color} strokeWidth={c.id === editingId ? 3 : 2.5} strokeDasharray="6 3" pointerEvents="none" />
+          {c.points.map((p, i) => {
+            const common = { fill: c.color, stroke: c.id === editingId ? "#1a2028" : "none", strokeWidth: 1 };
+            const handlers = c.id === editingId ? {
+              style: { cursor: "move" },
+              onMouseDown: (e) => { e.stopPropagation(); if (e.altKey) { onEditPoints(c.id, (pts) => deleteVertex(pts, i)); return; } dragRef.current = { id: c.id, i }; },
+              onClick: (e) => e.stopPropagation(),
+            } : {};
+            const r = c.id === editingId ? 4.5 : 2.5;
+            const tip = p.snap ? `${p.hole_id} @ ${Number(p.md).toFixed(2)} m (snapped to ${p.snap === "boundary" ? "the logged contact" : "the trace"})` : "free point";
+            return p.snap
+              ? <rect key={i} x={sx(p.l) - r} y={sz(p.z) - r} width={2 * r} height={2 * r} {...common} {...handlers}><title>{tip}</title></rect>
+              : <circle key={i} cx={sx(p.l)} cy={sz(p.z)} r={r} {...common} {...handlers}><title>{tip}</title></circle>;
+          })}
           <text x={sx(c.points[0].l)} y={sz(c.points[0].z) - 8} fill={c.color} fontSize="10" fontWeight="600">{c.unit}</text>
         </g>
       ))}
@@ -622,7 +683,9 @@ function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, v
       {drawing && drawPoints.length > 0 && (
         <g>
           <polyline points={drawPoints.map((p) => `${sx(p.l)},${sz(p.z)}`).join(" ")} fill="none" stroke="#e2a63c" strokeWidth="2" strokeDasharray="4 3" />
-          {drawPoints.map((p, i) => <circle key={i} cx={sx(p.l)} cy={sz(p.z)} r="3" fill="#e2a63c" stroke="#ffffff" strokeWidth="1" />)}
+          {drawPoints.map((p, i) => (p.snap
+            ? <rect key={i} x={sx(p.l) - 3.5} y={sz(p.z) - 3.5} width="7" height="7" fill="#e2a63c" stroke="#1a2028" strokeWidth="1"><title>{`${p.hole_id} @ ${Number(p.md).toFixed(2)} m (snapped)`}</title></rect>
+            : <circle key={i} cx={sx(p.l)} cy={sz(p.z)} r="3" fill="#e2a63c" stroke="#ffffff" strokeWidth="1" />))}
         </g>
       )}
 

@@ -70,6 +70,7 @@ import { codesInUse, connectIntervals, effectiveCode, codeInfo } from "../lib/mo
 import { legendScale } from "../lib/legendScale.js"; // TASKS.csv #498
 import { corridorRuns, mdInRuns } from "../lib/sectionCorridor.js"; // TASKS.csv #499
 import { slabRuns, piercePoints, tracePolylines, pointAtMd, voxelPlanRects, meshPlanCut } from "../lib/levelPlan.js"; // TASKS.csv #525
+import { ghostStrings } from "../lib/sectionDigitise.js"; // TASKS.csv #519
 import ModellingCodesPane from "../components/ModellingCodesPane.jsx"; // TASKS.csv #599
 import { LAYER_META, colorForLithology, rqdColor, magColor, hashColor, distinctValues, minMax, colorForVoxelValue, makeVoxelColorResolverRGB, roleForLithology, isCrossCuttingRole, colorForMedium, classifyBreaks, paletteColorsHex, PALETTES, CATEGORICAL_SAFE_COLORS } from "../lib/layers.js";
 import { computeMeshVolume, computeTonnage } from "../lib/volumetrics.js";
@@ -1085,6 +1086,8 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // what's in the 3D scene itself), so a planned hole stays visible for context while working in 3D
   // View or 3D Modeling too, not just the Targeting tab where it's edited.
   const plannedGroupRef = useRef(null);
+  const sectionStringsGroupRef = useRef(null); // TASKS.csv #519
+  const [showSectionStrings, setShowSectionStrings] = useState(true); // TASKS.csv #519
   const plannedMeshesRef = useRef({}); // id -> THREE.Group (line + toe marker)
   const measureGroupRef = useRef(null); // TASKS.csv #121 — line/polygon + vertex markers for the active measurement
   const [implicitSurfaces, setImplicitSurfaces] = useState([]); // [{id, name, visible, vertexCount, faceCount}]
@@ -1990,6 +1993,9 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     // TASKS.csv #188 — planned drillholes, own group, same reasoning as voxelGroup/terrainGroup.
     const plannedGroup = new THREE.Group(); plannedGroup.name = "planned"; root.add(plannedGroup);
     plannedGroupRef.current = plannedGroup;
+    // TASKS.csv #519 — saved section strings as 3D lines
+    const sectionStringsGroup = new THREE.Group(); sectionStringsGroup.name = "sectionStrings"; root.add(sectionStringsGroup);
+    sectionStringsGroupRef.current = sectionStringsGroup;
     plannedMeshesRef.current = {};
 
     // TASKS.csv #121 — measurement tool's own group, same reasoning as plannedGroup/voxelGroup.
@@ -5311,6 +5317,23 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // industry convention of drawing planned/proposed holes dashed on a section) in a bright cyan that
   // doesn't collide with any lithology/alteration/vein color already in use, plus a small diamond-
   // shaped toe marker so the hole's endpoint (not just its direction) is visible at a glance.
+  // TASKS.csv #519 — the strings digitised on sections (contacts, faults, free strings) as thin 3D lines at their real
+  // x / y / z: before, they were only visible in their own section window (and in the CSV / DXF exports).
+  useEffect(() => {
+    const group = sectionStringsGroupRef.current;
+    if (!group) return;
+    group.children.slice().forEach((ch) => { group.remove(ch); ch.geometry?.dispose(); ch.material?.dispose(); });
+    if (!showSectionStrings) return;
+    const { x: ox, y: oy, z: oz } = originRef.current;
+    (sections || []).forEach((s) => (s.contacts || []).forEach((c) => {
+      const pts = (c.points || []).filter((p) => [p.x, p.y, p.z].every(Number.isFinite)).map((p) => new THREE.Vector3(p.x - ox, p.z - oz, -(p.y - oy)));
+      if (pts.length < 2) return;
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: new THREE.Color(c.color || "#e2a63c"), depthTest: true }));
+      line.userData = { tip: `${c.unit} (${c.kind === "fault" ? "fault" : c.kind === "string" ? "string" : "upper contact"})\nsection: ${s.name}\n${pts.length} vertices` };
+      group.add(line);
+    }));
+  }, [sections, showSectionStrings]);
+
   useEffect(() => {
     const group = plannedGroupRef.current;
     if (!group) return;
@@ -6203,14 +6226,16 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     // of a freeform typed name (see SectionWindow.jsx's finishContact comment for why: a contact tied
     // to an actual litho unit, tagged as that unit's upper contact, is what #98 needs to feed drawn
     // contacts into 3D surface generation as real interface points later).
-    openSectionWindow({ id, title: name, section: { ax: a.x, ay: a.y, bx: b.x, by: b.y, azimuth, corridor }, holes, intervals, points, planes, contacts: [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection });
+    openSectionWindow({ id, title: name, section: { ax: a.x, ay: a.y, bx: b.x, by: b.y, azimuth, corridor }, holes, intervals, points, planes, contacts: [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection,
+      ghostStrings: ghostStrings({ id, ax: a.x, ay: a.y, bx: b.x, by: b.y }, sections) }); // #519
   };
 
   const reopenSection = useCallback((s) => {
     const a = { x: s.ax, y: s.ay }, b = { x: s.bx, y: s.by };
     const { holes, intervals, points, planes, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection } = buildSectionPayload(a, b, s.corridor, s.scope || {});
-    openSectionWindow({ id: s.id, title: s.name, section: { ax: s.ax, ay: s.ay, bx: s.bx, by: s.by, azimuth: s.azimuth, corridor: s.corridor }, holes, intervals, points, planes, contacts: s.contacts || [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection });
-  }, [layers, layerVisible, customLayers, customVisible, assays, assayVisible, assayDisplayElements, assayStyle, isRowVisible, effectiveColor, effectiveLabel, numericLayerColor, litho_units, terrain, voxelModels, implicitSurfaces, plannedHoles]);
+    openSectionWindow({ id: s.id, title: s.name, section: { ax: s.ax, ay: s.ay, bx: s.bx, by: s.by, azimuth: s.azimuth, corridor: s.corridor }, holes, intervals, points, planes, contacts: s.contacts || [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection,
+      ghostStrings: ghostStrings(s, sections) }); // #519 — the neighbouring sections' strings
+  }, [layers, layerVisible, customLayers, customVisible, assays, assayVisible, assayDisplayElements, assayStyle, isRowVisible, effectiveColor, effectiveLabel, numericLayerColor, litho_units, terrain, voxelModels, implicitSurfaces, plannedHoles, sections]);
 
   // TASKS.csv #393 — sections defined by numbers rather than two clicks: saved to the Cross-sections list
   // (same shape as a drawn one) and opened at once.
@@ -6854,6 +6879,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
             <>
               <div className="ge-section-label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span>Cross-sections ({sections.length})</span>
+                {sections.some((s) => (s.contacts || []).length) && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 3, textTransform: "none", letterSpacing: 0, fontSize: "var(--font-size-xs)", fontWeight: 400 }} title="Draw the saved section strings (contacts, faults, strings) as 3D lines in the view">
+                    <input type="checkbox" checked={showSectionStrings} onChange={(e) => setShowSectionStrings(e.target.checked)} /> in 3D
+                  </label>
+                )}
                 {/* TASKS.csv #409 — digitised contacts/faults/strings out as 3D CSV and DXF */}
                 {sections.some((s) => (s.contacts || []).length) && (
                   <span style={{ display: "flex", gap: 8, textTransform: "none", letterSpacing: 0, fontSize: "var(--font-size-xs)" }}>
