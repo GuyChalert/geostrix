@@ -60,6 +60,7 @@ const BoundaryInterceptsModal = lazyModal(() => import("../components/BoundaryIn
 const StripLog = lazyModal(() => import("../components/StripLog.jsx"));  // TASKS.csv #301
 const StereonetModal = lazyModal(() => import("../components/StereonetModal.jsx"));  // TASKS.csv #301
 const DownholeStructurePlot = lazyModal(() => import("../components/DownholeStructurePlot.jsx")); // TASKS.csv #277  // TASKS.csv #301
+const LevelPlanWindow = lazyModal(() => import("../components/LevelPlanWindow.jsx")); // TASKS.csv #525
 const SurfaceQueryModal = lazyModal(() => import("../components/SurfaceQueryModal.jsx")); // TASKS.csv #146  // TASKS.csv #301
 const SurfaceCompareModal = lazyModal(() => import("../components/SurfaceCompareModal.jsx")); // TASKS.csv #93  // TASKS.csv #301
 import { buildLineages, candidatePredecessors } from "../lib/surfaceVersions.js"; // TASKS.csv #93
@@ -68,6 +69,7 @@ const CoreOrientationCalculator = lazyModal(() => import("../components/CoreOrie
 import { codesInUse, connectIntervals, effectiveCode, codeInfo } from "../lib/modellingCodes.js"; // TASKS.csv #599
 import { legendScale } from "../lib/legendScale.js"; // TASKS.csv #498
 import { corridorRuns, mdInRuns } from "../lib/sectionCorridor.js"; // TASKS.csv #499
+import { slabRuns, piercePoints, tracePolylines, pointAtMd, voxelPlanRects, meshPlanCut } from "../lib/levelPlan.js"; // TASKS.csv #525
 import ModellingCodesPane from "../components/ModellingCodesPane.jsx"; // TASKS.csv #599
 import { LAYER_META, colorForLithology, rqdColor, magColor, hashColor, distinctValues, minMax, colorForVoxelValue, makeVoxelColorResolverRGB, roleForLithology, isCrossCuttingRole, colorForMedium, classifyBreaks, paletteColorsHex, PALETTES, CATEGORICAL_SAFE_COLORS } from "../lib/layers.js";
 import { computeMeshVolume, computeTonnage } from "../lib/volumetrics.js";
@@ -1110,6 +1112,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   const [structuralTarget, setStructuralTarget] = useState("");
   const [stereonetOpen, setStereonetOpen] = useState(false); // TASKS.csv #141
   const [tadpoleOpen, setTadpoleOpen] = useState(false); // TASKS.csv #277 — downhole structural plot
+  const [levelPlanOpen, setLevelPlanOpen] = useState(false); // TASKS.csv #525 — horizontal section at an RL
   const [surfaceQueryOpen, setSurfaceQueryOpen] = useState(false); // TASKS.csv #146 — distance/point-in-domain report
   // TASKS.csv #93 — iterative modelling workflow. Holds the surface id the compare dialog was opened
   // from (so it can preselect that lineage), or null when closed.
@@ -5859,6 +5862,69 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // everything currently visible regardless of relevance. null/undefined on any individual scope key
   // means "don't override — use the live visibility state", so an old section with no scope field at
   // all (every section saved before this feature existed) renders identically to before.
+  // Flatten every currently-visible layer into plain {color,label} primitives here, in the main
+  // window, where all the color/legend/filter logic already lives — so the pop-out window just
+  // draws shapes and never needs to know about layer types, filters, or overrides.
+  // TASKS.csv #525 — factored out of buildSectionPayload so the level plan colours holes exactly as sections do.
+  const layerPrimitivesFor = (holeIds, scope = {}) => {
+    const intervals = [];
+    // TASKS.csv #137 — SG has no fixed domain the way RQD%/recovery% do (see the main geometry
+    // effect's numericIntervalColor comment for the same reasoning) — its actual project min/max
+    // is computed once here too, same values that effect's globalPointRanges.sg would produce.
+    const sgVals = (layers.sg || []).filter((r) => holeIds.has(r.hole_id) && isRowVisible("sg", r)).map((r) => r.value).filter((v) => typeof v === "number" && !isNaN(v));
+    const sgRange = minMax(sgVals);
+    ["litho", "alt", "vein", "breccia", "geotech", "recovery", "sg", "litho_gc", "alt_gc"].forEach((key) => {
+      if (scope.layerKeys != null ? !scope.layerKeys.includes(key) : !layerVisible[key]) return;
+      const meta = LAYER_META[key];
+      (layers[key] || []).forEach((row) => {
+        if (!holeIds.has(row.hole_id) || !isRowVisible(key, row)) return;
+        const color = meta.numeric ? numericLayerColor(key, row.value, key === "sg" ? sgRange : { min: 0, max: 100 }) : effectiveColor(key, row.value);
+        const label = meta.numeric ? row.value : effectiveLabel(key, row.value);
+        intervals.push({ hole_id: row.hole_id, from: row.from, to: row.to, color, label: `${meta.label}: ${label}`, layer: key }); // #392 — layer drives the ribbon offset
+      });
+    });
+
+    const points = [];
+    ["mnlgy", "magsusc"].forEach((key) => {
+      if (scope.layerKeys != null ? !scope.layerKeys.includes(key) : !layerVisible[key]) return;
+      const meta = LAYER_META[key];
+      const vals = (layers[key] || []).filter((r) => holeIds.has(r.hole_id) && isRowVisible(key, r));
+      const numeric = vals.map((r) => r.value).filter((v) => typeof v === "number" && !isNaN(v));
+      const { min, max } = minMax(numeric); // not Math.min/max(...) — see layers.js's minMax comment
+      vals.forEach((row) => {
+        const mid = (row.from + row.to) / 2;
+        const color = meta.numeric ? numericLayerColor(key, row.value, { min, max }) : effectiveColor(key, row.value);
+        const label = meta.numeric ? row.value : effectiveLabel(key, row.value);
+        points.push({ hole_id: row.hole_id, md: mid, color, label: `${meta.label}: ${label}` });
+      });
+    });
+    const showAssays = scope.showAssays != null ? scope.showAssays : assayVisible;
+    if (showAssays && assayDisplayElements.length) {
+      assayDisplayElements.forEach((sym, idx) => {
+        const style = assayStyle[sym];
+        const vals = assays.filter((a) => holeIds.has(a.hole_id) && a.values[sym] != null && assayPassesCutoff(a.values[sym], style));
+        if (!vals.length) return;
+        vals.forEach((a) => {
+          const mid = (a.from + a.to) / 2, v = a.values[sym];
+          points.push({ hole_id: a.hole_id, md: mid, color: assayColorFor(v, idx, style), label: `${sym}: ${v}`, assay: { sym, value: v, idx, from: a.from, to: a.to } }); // #392 — drawn as a grade bar
+        });
+      });
+    }
+
+    const showCustomLayers = scope.showCustomLayers != null ? scope.showCustomLayers : true;
+    customLayers.forEach((layer) => {
+      if (!showCustomLayers) return;
+      if (scope.showCustomLayers == null && customVisible[layer.id] === false) return;
+      layer.rows.filter((r) => holeIds.has(r.hole_id)).forEach((row) => {
+        const color = hashColor(row.value);
+        if (row.to != null && !isNaN(row.to)) intervals.push({ hole_id: row.hole_id, from: row.from, to: row.to, color, label: `${layer.name}: ${row.value}`, layer: `custom:${layer.id}` });
+        else if (row.depth != null && !isNaN(row.depth)) points.push({ hole_id: row.hole_id, md: row.depth, color, label: `${layer.name}: ${row.value}` });
+      });
+    });
+
+    return { intervals, points };
+  };
+
   const buildSectionPayload = (a, b, corridor, scope = {}) => {
     const azimuth = (Math.atan2(b.x - a.x, b.y - a.y) * 180 / Math.PI + 360) % 360;
     const holesInBand = tracesRef.current.filter((t) => t.wx.some((wx, i) => distToSegment(wx, t.wy[i], a.x, a.y, b.x, b.y) <= corridor));
@@ -5909,52 +5975,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       if (rects.length) voxelSlices.push({ id: model.id, name: model.name, rects });
     });
 
-    // Flatten every currently-visible layer into plain {color,label} primitives here, in the main
-    // window, where all the color/legend/filter logic already lives — so the pop-out window just
-    // draws shapes and never needs to know about layer types, filters, or overrides.
-    const intervals = [];
-    // TASKS.csv #137 — SG has no fixed domain the way RQD%/recovery% do (see the main geometry
-    // effect's numericIntervalColor comment for the same reasoning) — its actual project min/max
-    // is computed once here too, same values that effect's globalPointRanges.sg would produce.
-    const sgVals = (layers.sg || []).filter((r) => holeIds.has(r.hole_id) && isRowVisible("sg", r)).map((r) => r.value).filter((v) => typeof v === "number" && !isNaN(v));
-    const sgRange = minMax(sgVals);
-    ["litho", "alt", "vein", "breccia", "geotech", "recovery", "sg", "litho_gc", "alt_gc"].forEach((key) => {
-      if (scope.layerKeys != null ? !scope.layerKeys.includes(key) : !layerVisible[key]) return;
-      const meta = LAYER_META[key];
-      (layers[key] || []).forEach((row) => {
-        if (!holeIds.has(row.hole_id) || !isRowVisible(key, row)) return;
-        const color = meta.numeric ? numericLayerColor(key, row.value, key === "sg" ? sgRange : { min: 0, max: 100 }) : effectiveColor(key, row.value);
-        const label = meta.numeric ? row.value : effectiveLabel(key, row.value);
-        intervals.push({ hole_id: row.hole_id, from: row.from, to: row.to, color, label: `${meta.label}: ${label}`, layer: key }); // #392 — layer drives the ribbon offset
-      });
-    });
-
-    const points = [];
-    ["mnlgy", "magsusc"].forEach((key) => {
-      if (scope.layerKeys != null ? !scope.layerKeys.includes(key) : !layerVisible[key]) return;
-      const meta = LAYER_META[key];
-      const vals = (layers[key] || []).filter((r) => holeIds.has(r.hole_id) && isRowVisible(key, r));
-      const numeric = vals.map((r) => r.value).filter((v) => typeof v === "number" && !isNaN(v));
-      const { min, max } = minMax(numeric); // not Math.min/max(...) — see layers.js's minMax comment
-      vals.forEach((row) => {
-        const mid = (row.from + row.to) / 2;
-        const color = meta.numeric ? numericLayerColor(key, row.value, { min, max }) : effectiveColor(key, row.value);
-        const label = meta.numeric ? row.value : effectiveLabel(key, row.value);
-        points.push({ hole_id: row.hole_id, md: mid, color, label: `${meta.label}: ${label}` });
-      });
-    });
-    const showAssays = scope.showAssays != null ? scope.showAssays : assayVisible;
-    if (showAssays && assayDisplayElements.length) {
-      assayDisplayElements.forEach((sym, idx) => {
-        const style = assayStyle[sym];
-        const vals = assays.filter((a) => holeIds.has(a.hole_id) && a.values[sym] != null && assayPassesCutoff(a.values[sym], style));
-        if (!vals.length) return;
-        vals.forEach((a) => {
-          const mid = (a.from + a.to) / 2, v = a.values[sym];
-          points.push({ hole_id: a.hole_id, md: mid, color: assayColorFor(v, idx, style), label: `${sym}: ${v}`, assay: { sym, value: v, idx, from: a.from, to: a.to } }); // #392 — drawn as a grade bar
-        });
-      });
-    }
+    const { intervals, points } = layerPrimitivesFor(holeIds, scope); // #525 — shared with the level plan
 
     const planes = [];
     if (scope.layerKeys != null ? scope.layerKeys.includes("structure") : layerVisible.structure) {
@@ -5969,17 +5990,6 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         planes.push({ hole_id: s.hole_id, depth: s.depth, color, label: `Structure: ${label}`, apparentDip });
       });
     }
-
-    const showCustomLayers = scope.showCustomLayers != null ? scope.showCustomLayers : true;
-    customLayers.forEach((layer) => {
-      if (!showCustomLayers) return;
-      if (scope.showCustomLayers == null && customVisible[layer.id] === false) return;
-      layer.rows.filter((r) => holeIds.has(r.hole_id)).forEach((row) => {
-        const color = hashColor(row.value);
-        if (row.to != null && !isNaN(row.to)) intervals.push({ hole_id: row.hole_id, from: row.from, to: row.to, color, label: `${layer.name}: ${row.value}`, layer: `custom:${layer.id}` });
-        else if (row.depth != null && !isNaN(row.depth)) points.push({ hole_id: row.hole_id, md: row.depth, color, label: `${layer.name}: ${row.value}` });
-      });
-    });
 
     // TASKS.csv #499 — keep only what lies in the corridor: intervals / assay bars clipped to the in-corridor runs,
     // points and structures kept when their depth is in one. (Before, a hole touching the corridor anywhere had
@@ -6090,6 +6100,88 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     });
 
     return { azimuth, holes, intervals, points, planes, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection };
+  };
+
+  // TASKS.csv #525 — a LEVEL PLAN: everything cut by the horizontal plane z = rl, keeping what lies in the slab
+  // rl ± half (hole runs, their logs, assays, structures), plus pierce points, block-model cells at the RL, model
+  // surfaces / solids cut by the plane and planned holes. Same layer colours / filters / legend as a section
+  // (layerPrimitivesFor). Geometry is in lib/levelPlan.js; coordinates are E / N.
+  const buildPlanPayload = (rl, half) => {
+    const zmin = rl - half, zmax = rl + half;
+    const holes = [];
+    for (const t of tracesRef.current) {
+      const trace = t.pts.map((p, i) => ({ md: p.md, x: t.wx[i], y: t.wy[i], z: t.wz[i] }));
+      if (!trace.length) continue;
+      const runs = slabRuns(trace, zmin, zmax);
+      // context: the whole hole, thinned to ~200 points
+      const k = Math.max(1, Math.floor(trace.length / 200));
+      const context = trace.filter((_, i) => i % k === 0 || i === trace.length - 1).map((p) => [p.x, p.y]);
+      holes.push({ hole_id: t.hole_id, trace, runs, polylines: tracePolylines(trace, runs), pierce: piercePoints(trace, rl), collar: [trace[0].x, trace[0].y], context });
+    }
+    const inSlab = holes.filter((h) => h.runs.length);
+    const holeIds = new Set(inSlab.map((h) => h.hole_id));
+    const { intervals, points } = layerPrimitivesFor(holeIds, {});
+    const byId = new Map(holes.map((h) => [h.hole_id, h]));
+    const clip = (h, from, to) => h.runs.map(([r0, r1]) => [Math.max(from, r0), Math.min(to, r1)]).filter(([f, t]) => t - f > 1e-6);
+    const planIntervals = [];
+    intervals.forEach((iv) => {
+      const h = byId.get(iv.hole_id); if (!h) return;
+      const parts = clip(h, iv.from, iv.to);
+      if (parts.length) planIntervals.push({ hole_id: iv.hole_id, layer: iv.layer, color: iv.color, label: iv.label, from: iv.from, to: iv.to, lines: tracePolylines(h.trace, parts) });
+    });
+    const planPoints = [];
+    points.forEach((pt) => {
+      const h = byId.get(pt.hole_id); if (!h) return;
+      const md = pt.assay ? (pt.assay.from + pt.assay.to) / 2 : pt.md;
+      if (!h.runs.some(([a, b]) => md >= a - 1e-9 && md <= b + 1e-9)) return;
+      const q = pointAtMd(h.trace, md);
+      planPoints.push({ hole_id: pt.hole_id, md, x: q.x, y: q.y, color: pt.color, label: pt.label, assay: pt.assay || null });
+    });
+    // what each pierce point sits in: the interval of every logged layer at that depth, and the assays there
+    holes.forEach((h) => h.pierce.forEach((pc) => {
+      pc.logs = intervals.filter((iv) => iv.hole_id === h.hole_id && pc.md >= iv.from && pc.md <= iv.to).map((iv) => ({ label: iv.label, color: iv.color, layer: iv.layer }));
+      pc.assays = points.filter((pt) => pt.hole_id === h.hole_id && pt.assay && pc.md >= pt.assay.from && pc.md <= pt.assay.to).map((pt) => pt.label);
+    }));
+    const structures = [];
+    if (layerVisible.structure) {
+      (layers.structure || []).forEach((sp) => {
+        const h = byId.get(sp.hole_id);
+        if (!h || !isRowVisible("structure", sp) || !h.runs.some(([a, b]) => sp.depth >= a && sp.depth <= b)) return;
+        const q = pointAtMd(h.trace, Number(sp.depth));
+        const oriented = Number.isFinite(Number(sp.dip)) && Number.isFinite(Number(sp.azimuth)) && sp.dip !== null && sp.azimuth !== null;
+        structures.push({ hole_id: sp.hole_id, depth: sp.depth, x: q.x, y: q.y, dip: oriented ? Number(sp.dip) : null, dipDir: oriented ? Number(sp.azimuth) : null, color: effectiveColor("structure", sp.value), label: `Structure: ${effectiveLabel("structure", sp.value)}` });
+      });
+    }
+    const voxelSlices = [];
+    (voxelModels || []).forEach((model) => {
+      if (!model.cells?.length || model.visible === false) return;
+      const rects = voxelPlanRects(model.cells.filter((c) => voxelCellSupported(model, c)), rl).map((r) => ({ x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: colorForVoxelValue(model, r.value) }));
+      if (rects.length) voxelSlices.push({ id: model.id, name: model.name, rects });
+    });
+    const surfaceCuts = [];
+    {
+      const o = originRef.current;
+      const nameOf = Object.fromEntries((implicitSurfaces || []).map((sf) => [sf.id, sf.name]));
+      Object.entries(implicitMeshesRef.current || {}).forEach(([id, mesh]) => {
+        if (!mesh?.visible || !mesh.geometry?.attributes?.position) return;
+        const pos = mesh.geometry.attributes.position.array, n = pos.length / 3;
+        const tris = mesh.geometry.index ? mesh.geometry.index.array : Uint32Array.from({ length: n }, (_, i) => i);
+        // scene -> world: E = x + ox, N = oy - z, Z = y + oz (as the section cut)
+        const segs = meshPlanCut(n, tris, (i) => ({ x: pos[i * 3] + o.x, y: o.y - pos[i * 3 + 2], z: pos[i * 3 + 1] + o.z }), rl);
+        if (segs.length) surfaceCuts.push({ id, name: nameOf[id] || String(mesh.userData?.tip || id).split("\n")[0], color: `#${(mesh.material?.color?.getHex?.() ?? 0xc8a24a).toString(16).padStart(6, "0")}`, segs });
+      });
+    }
+    const planned = [];
+    (plannedHoles || []).forEach((ph) => {
+      const tr = plannedHoleTrace(ph);
+      if (!tr?.length) return;
+      const runs = slabRuns(tr, zmin, zmax), pierce = piercePoints(tr, rl);
+      planned.push({ name: ph.name || ph.id, collar: [tr[0].x, tr[0].y], lines: tracePolylines(tr, runs), pierce, context: tr.map((p) => [p.x, p.y]) });
+    });
+    const legendSeen = new Set(), legendItems = [];
+    [...planIntervals, ...structures].forEach((r) => { const key = `${r.label}|${r.color}`; if (!legendSeen.has(key) && !/^(Geotech|Recovery|Specific gravity)/.test(r.label)) { legendSeen.add(key); legendItems.push([r.label, r.color]); } });
+    legendItems.sort((a, b) => a[0].localeCompare(b[0]));
+    return { rl, half, holes, intervals: planIntervals, points: planPoints, structures, voxelSlices, surfaceCuts, planned, legendItems };
   };
 
   // TASKS.csv — cross-section contact drawing. Every launched section is auto-registered in
@@ -6236,6 +6328,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     <div style={{ display: visible ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0, width: "100%" }}>
       {mode === "view" && (
         <ViewToolbar
+          onLevelPlan={() => { if (!tracesRef.current.length) { setNotices((p) => [...p, "Load collars first — a level plan cuts the drillholes at an elevation."]); return; } setLevelPlanOpen(true); }}
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           gridConfig={gridConfig} setGridConfig={setGridConfig}
           figureOverlay={figureOverlay} setFigureOverlay={setFigureOverlay} projectName={project?.name || ""} legendCount={overlayLegendGroups.reduce((n, g) => n + g.items.length + (g.ramp ? 1 : 0), 0)}
@@ -8492,6 +8585,22 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       )}
       {/* TASKS.csv #277 — downhole structural (tadpole) plot. Fed the SAME hole-attitude-enriched picks
           the stereonet's Terzaghi correction uses, so alpha means one thing across both tools. */}
+      {levelPlanOpen && (() => {
+        // TASKS.csv #525 — elevation range of the loaded holes (loops, not Math.min(...) over every vertex, #371)
+        let z0 = Infinity, z1 = -Infinity;
+        tracesRef.current.forEach((t) => t.wz.forEach((z) => { if (z < z0) z0 = z; if (z > z1) z1 = z; }));
+        if (!Number.isFinite(z0)) return null;
+        return (
+          <LevelPlanWindow
+            build={buildPlanPayload}
+            zRange={[z0, z1]}
+            defaultRl={(z0 + z1) / 2}
+            onClose={() => setLevelPlanOpen(false)}
+            onSaveBoundary={(pts, rl, name) => addBoundary({ name, polylines: [pts.map(([x, y]) => ({ x, y }))], elevation: rl, drapeMode: "flat" })}
+            onAddToLayout={(img) => { addLayoutImage(img); goToModule("layout"); }}
+          />
+        );
+      })()}
       {tadpoleOpen && (
         <DownholeStructurePlot
           picks={structurePicksWithHoleAttitude}
@@ -8611,6 +8720,7 @@ function ViewToolbar({
   onSnapshot, snapshotDisabled, sectionMode, onToggleSection, sectionCorridor, setSectionCorridor,
   measureMode, onToggleMeasure, onSwitchMeasureMode, measurePts, clearMeasure,
   show, paneProps, // TASKS.csv #458
+  onLevelPlan, // TASKS.csv #525
 }) {
   const toggle = (name) => setOpenPopover((p) => (p === name ? null : name));
   return (
@@ -8761,6 +8871,7 @@ function ViewToolbar({
         )}
         <RibbonButton icon={Crosshair} label="By coordinates" tone="section" title="Open a section from a centre, azimuth and length — or through a hole (scissors in the Holes list)" {...paneProps("sectionCoords")} />
         <RibbonButton icon={Rows3} label="Fence series" tone="section" title="Parallel sections at a set azimuth and spacing, on round grid lines" {...paneProps("fence")} />
+        <RibbonButton icon={Layers3} label="Level plan" tone="section" title="Horizontal section (level plan) at an RL: pierce points, logs and assays in a slab, block-model cells and surfaces cut at that elevation" onClick={onLevelPlan} />
       </RibbonGroup>
       <RibbonGroup label="Measure & check">
         <div className="ge-ribbon-cell">
