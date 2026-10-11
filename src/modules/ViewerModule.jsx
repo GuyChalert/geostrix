@@ -5749,7 +5749,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
 
   // TASKS.csv #128 — DXF export, the CAD/GIS interop format surveyors and mine planners actually work
   // in day to day, alongside Shapefile/GeoPackage above. Same buildVectorFeatures() data path, just a
-  // third output format — plan-view only (X/Y; Z dropped), per src/lib/dxf.js's own scope note.
+  // third output format. Elevations are written (#408) and the file is consistent R12 (#578), per src/lib/dxf.js.
   const exportVectorDXF = async (kind, key, label) => {
     const { features, geomType } = buildVectorFeatures(kind, key);
     if (!features.length) { setNotices((p) => [...p, `Nothing to export for "${label}" — no rows with usable/desurveyed coordinates.`]); return; }
@@ -5762,7 +5762,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         content: dxfText,
       });
       if (!res?.ok) { if (res?.error) throw new Error(res.error); return; } // cancelled: say nothing
-      setNotices((p) => [...p, `Exported ${features.length} feature(s) from "${label}" as a DXF (.dxf, plan-view — elevation dropped).`]);
+      setNotices((p) => [...p, `Exported ${features.length} feature(s) from "${label}" as a DXF (.dxf, R12, elevations kept).`]);
     } catch (err) {
       setNotices((p) => [...p, errorNotice(`DXF export failed: ${err.message}`)]);
     }

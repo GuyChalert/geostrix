@@ -437,13 +437,11 @@ export function parseDXFMesh(text, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Export: writes a minimal, valid ASCII DXF (R12-compatible subset — just ENTITIES, no HEADER/
-// TABLES/BLOCKS — every DXF reader tested against, including QGIS and AutoCAD, accepts this) from the
-// same {features:[{geometry:[[x,y,z],...], attributes}], geomType} shape buildVectorFeatures()
-// (ViewerModule.jsx) already produces for Shapefile/GeoPackage export, so this is a third output
-// format on the exact same data path rather than a new one. Plan-view only (X/Y; Z is dropped) per
-// this task's own framing — DXF's LWPOLYLINE entity (used here for both "polyline" and multi-vertex
-// geometry) is inherently 2D-per-vertex anyway. Each entity's DXF layer is set to its attributes'
+// Export: writes a minimal ASCII R12 DXF (a HEADER with only $ACADVER = AC1009, then ENTITIES; no TABLES /
+// BLOCKS, which R12 does not require) from the same {features:[{geometry:[[x,y,z],...], attributes}], geomType}
+// shape buildVectorFeatures() (ViewerModule.jsx) already produces for Shapefile/GeoPackage export, so this is a
+// third output format on the exact same data path rather than a new one. Entities: POINT, and POLYLINE + VERTEX
+// (3D when the geometry has elevations, #408; 2D otherwise; closed for rings, #578). Each entity's DXF layer is set to its attributes'
 // hole_id when present (so a surveyor opening the file gets one CAD layer per drillhole, the way
 // they'd expect), falling back to a shared "GEOSTRIX" layer otherwise.
 function sanitizeLayerName(name) {
@@ -454,6 +452,11 @@ export function buildDXF({ features, geomType }) {
   const lines = [];
   const put = (code, value) => { lines.push(String(code), String(value)); };
 
+  // TASKS.csv #578 — the file says it is R12 (AC1009) and every entity is an R12 one. 2D strings used to be written
+  // as LWPOLYLINE, an R14 / R2000 entity, without the AcDbEntity / AcDbPolyline subclass markers and handles R2000
+  // readers expect, in a file with no header (so read as R12): lenient readers (GDAL / QGIS) coped, strict ones
+  // (AutoCAD, some Micromine / Surpac versions) could drop them. Closed rings set the closed bit.
+  put(0, "SECTION"); put(2, "HEADER"); put(9, "$ACADVER"); put(1, "AC1009"); put(0, "ENDSEC");
   put(0, "SECTION"); put(2, "ENTITIES");
 
   // TASKS.csv #408 — Z is written. Points carry their real elevation (they were all written at 0), and a
@@ -468,14 +471,17 @@ export function buildDXF({ features, geomType }) {
       });
       return;
     }
-    if (f.geometry.some((p) => Number.isFinite(p[2]))) {
-      put(0, "POLYLINE"); put(8, layer); put(66, 1); put(70, 8); put(10, "0.0"); put(20, "0.0"); put(30, "0.0");
-      f.geometry.forEach((p) => { put(0, "VERTEX"); put(8, layer); put(10, p[0].toFixed(4)); put(20, p[1].toFixed(4)); put(30, z(p).toFixed(4)); put(70, 32); });
-      put(0, "SEQEND"); put(8, layer);
-      return;
-    }
-    put(0, "LWPOLYLINE"); put(8, layer); put(90, f.geometry.length); put(70, 0);
-    f.geometry.forEach(([x, y]) => { put(10, x.toFixed(4)); put(20, y.toFixed(4)); });
+    // a ring (polygon, or a string that ends where it starts): closed bit, without repeating the first vertex
+    let g = f.geometry;
+    const [a, b] = [g[0], g[g.length - 1]];
+    const ring = g.length > 3 && a[0] === b[0] && a[1] === b[1] && z(a) === z(b);
+    const closed = ring || (geomType === "polygon" && g.length > 2);
+    if (ring) g = g.slice(0, -1);
+    const is3d = g.some((p) => Number.isFinite(p[2]));
+    // R12 POLYLINE: 3D (flag 8, VERTEX flag 32) when there are elevations, else a 2D one (flag 0, VERTEX flag 0)
+    put(0, "POLYLINE"); put(8, layer); put(66, 1); put(70, (is3d ? 8 : 0) | (closed ? 1 : 0)); put(10, "0.0"); put(20, "0.0"); put(30, "0.0");
+    g.forEach((p) => { put(0, "VERTEX"); put(8, layer); put(10, p[0].toFixed(4)); put(20, p[1].toFixed(4)); put(30, z(p).toFixed(4)); put(70, is3d ? 32 : 0); });
+    put(0, "SEQEND"); put(8, layer);
   });
 
   put(0, "ENDSEC");

@@ -31,6 +31,25 @@ test("#408 export writes a 3D POLYLINE that re-imports with the same Z", () => {
   assert.equal(r.layers[0], "DH-1");
 });
 
+test("#578 export is consistent R12: $ACADVER AC1009, no LWPOLYLINE, closed rings flagged", () => {
+  const ring = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]; // 2D, ends where it starts
+  const open2d = [[0, 0], [5, 5], [9, 1]];
+  const text = buildDXF({ geomType: "line", features: [{ geometry: ring, attributes: { hole_id: "CLAIM-1" } }, { geometry: open2d, attributes: {} }] });
+  assert.ok(text.startsWith(["0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009", "0", "ENDSEC", ""].join("\n")));
+  assert.doesNotMatch(text, /LWPOLYLINE/);
+  const r = parseDXF(text);
+  assert.equal(r.polylines.length, 2);
+  assert.deepEqual(r.closed, [true, false]);
+  assert.equal(r.polylines[0].length, 4); // the repeated closing vertex is not written; the closed bit says it
+  assert.deepEqual(r.polylines[1].map((p) => [p.x, p.y]), open2d);
+  // a polygon layer closes even when its ring is not repeated
+  assert.deepEqual(parseDXF(buildDXF({ geomType: "polygon", features: [{ geometry: [[0, 0], [4, 0], [4, 4]], attributes: {} }] })).closed, [true]);
+  // 3D strings keep flag 8 (+1 when closed) and their Z
+  const r3 = parseDXF(buildDXF({ geomType: "line", features: [{ geometry: [[0, 0, 5], [1, 0, 6], [1, 1, 7], [0, 0, 5]], attributes: {} }] }));
+  assert.deepEqual(r3.closed, [true]);
+  assert.deepEqual(r3.polylines[0].map((p) => p.z), [5, 6, 7]);
+});
+
 import { sectionStringsToRows, sectionStringsToDXF, kindOf } from "../src/lib/sectionExport.js";
 import { parseDXF as parseDXF409 } from "../src/lib/dxf.js";
 test("#409 section contacts/faults/strings export as vertex CSV rows and 3D DXF polylines", () => {
