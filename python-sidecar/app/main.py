@@ -56,6 +56,12 @@ MAX_BODY_BYTES = 30 * 1024 * 1024
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
 
+# TASKS.csv #594 — _guard is registered AFTER CORSMiddleware, so it runs OUTSIDE it: its early answers never got
+# Access-Control-Allow-Origin, and the renderer's cross-origin fetch saw an opaque failure ("engine not reachable")
+# instead of the 400 / 413 / 401 message. They carry the header themselves, like the 500 handler below.
+_CORS = {"Access-Control-Allow-Origin": "*"}
+
+
 @app.middleware("http")
 async def _guard(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -65,13 +71,13 @@ async def _guard(request: Request, call_next):
     try:
         cl_n = int(cl) if cl is not None else None
     except ValueError:
-        return JSONResponse(status_code=400, content={"detail": "Content-Length is not a number."})
+        return JSONResponse(status_code=400, content={"detail": "Content-Length is not a number."}, headers=_CORS)
     if request.method in ("POST", "PUT") and (cl_n is None or cl_n > MAX_BODY_BYTES):
-        return JSONResponse(status_code=413, content={"detail": f"Request body missing a length or larger than {MAX_BODY_BYTES // (1024 * 1024)} MB."})
+        return JSONResponse(status_code=413, content={"detail": f"Request body missing a length or larger than {MAX_BODY_BYTES // (1024 * 1024)} MB."}, headers=_CORS)
     if _TOKEN and request.url.path != "/health":
         sent = request.headers.get("x-geostrix-token", "")
         if not hmac.compare_digest(sent, _TOKEN):
-            return JSONResponse(status_code=401, content={"detail": "Missing or wrong sidecar token."})
+            return JSONResponse(status_code=401, content={"detail": "Missing or wrong sidecar token."}, headers=_CORS)
     return await call_next(request)
 
 # TASKS.csv #62 — background gempy warm-up. Root cause of "why is modelling so slow / times out
