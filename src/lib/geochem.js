@@ -462,6 +462,26 @@ function resolveAssaySegments(rows, symbol, unit, elementUnits, stats) {
   return segs;
 }
 
+// TASKS.csv #571 — the RAW (non-composited) sample intervals for estimation and grade shells. Those paths mapped
+// every assay row straight to a sample point, so an exact double import, or a re-assay over its parent interval,
+// became two co-located samples (double weight in IDW / kriging). Now the same rules as compositing and the
+// intercept tools: exact duplicates dropped (#286 / #331), overlapping rows resolved into non-overlapping
+// segments carrying the mean of the overlapping results (flagged `conflict`), negative lab codes treated as not
+// assayed (they used to be clamped to 0 downstream), values read through valueIn like compositing.
+// capValue: high-grade cap per segment, like the raw path before. Returns { intervals, stats }.
+export function rawSampleIntervals(assays, symbol, unit, elementUnits, { capValue = null } = {}) {
+  const { byHole, stats } = groupAssayRowsByHole(assays || []);
+  const intervals = [];
+  byHole.forEach((rows, hole_id) => {
+    resolveAssaySegments(rows, symbol, unit, elementUnits, stats).forEach((s) => {
+      if (s.value == null) return;
+      const avgGrade = capValue != null && s.value > capValue ? capValue : s.value;
+      intervals.push({ hole_id, from: s.from, to: s.to, avgGrade, ...(s.conflict ? { conflict: true } : {}) });
+    });
+  });
+  return { intervals, stats };
+}
+
 // TASKS.csv #230 (Micromine/mineral-exploration/Leapfrog-specialist audit finding) — best-intercept
 // reporting only ever showed ONE element (whichever the intercept was composited against), with no way
 // to see what a second/third element graded over that SAME depth window (e.g. "what's the Ag and Cu

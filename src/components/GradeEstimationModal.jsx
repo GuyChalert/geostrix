@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { buildMeshQuery, isPointInsideMesh, isMeshClosed } from "../lib/meshQuery.js"; // TASKS.csv #517
 import { X, Play } from "./icons.js";
-import { compositeDownhole, PRECIOUS_METALS, capAudit } from "../lib/geochem.js";
+import { compositeDownhole, rawSampleIntervals, PRECIOUS_METALS, capAudit } from "../lib/geochem.js"; // rawSampleIntervals: #571
 import CapAuditHint from "./CapAuditHint.jsx"; // TASKS.csv #533
 import { excludeQAQC } from "../lib/qaqc.js"; // TASKS.csv #266
 import { samplePointsFromIntervals, MAX_BLOCKS, ESTIMATION_METHODS, SUPPORT_COLORS, summarizeSupport } from "../lib/estimation.js";
@@ -162,7 +162,7 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
     setTimeout(async () => {
       try {
         const cap = Number.isFinite(capValue) && capValue > 0 ? capValue : null; // TASKS.csv #259
-        let intervals;
+        let intervals, rawStats = null;
         if (useComposites) {
           intervals = compositeDownhole(srcAssays, symbol, unit, elementUnits, {
             length: compositeLength, minCoverage, // TASKS.csv #262 — was hardcoded 0.5
@@ -170,13 +170,12 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
             domainRows: domainKey ? layers[domainKey] : null,
           });
         } else {
-          intervals = srcAssays
-            .filter((a) => a.hole_id != null && a.from != null && a.to != null)
-            .map((a) => ({ hole_id: a.hole_id, from: a.from, to: a.to, avgGrade: a.values[symbol] != null ? a.values[symbol] : null }))
-            .filter((iv) => iv.avgGrade != null)
-            .map((iv) => (cap != null && iv.avgGrade > cap ? { ...iv, avgGrade: cap } : iv));
+          // TASKS.csv #571 — duplicates / overlaps resolved, values in `unit`, as in compositing
+          const raw = rawSampleIntervals(srcAssays, symbol, unit, elementUnits, { capValue: cap });
+          intervals = raw.intervals;
+          rawStats = raw.stats;
         }
-        let { points, dropped, clamped } = samplePointsFromIntervals(intervals, collars, survey, desurveyHole, desurveyMethod); // #135
+        let { points, dropped, clamped, beyondTrace } = samplePointsFromIntervals(intervals, collars, survey, desurveyHole, desurveyMethod); // #135
         // TASKS.csv #517 — a hard boundary at a closed modelled volume: only samples inside it inform the estimate,
         // and only blocks whose centre is inside it are kept (a block outside is not estimated, not set to zero)
         let inShell = null, shellInfo = null;
@@ -226,7 +225,7 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
           est.blocksSkipped += before - est.cells.length; est.blocksEstimated = est.cells.length;
           params.restrictedToVolume = `${shellInfo.name}: ${shellInfo.samplesInside} sample(s) inside used, ${shellInfo.samplesOutside} outside left out; ${before - est.cells.length} block(s) outside it dropped`;
         }
-        setResult({ ...est, params, samplePointCount: points.length, droppedCount: dropped, clampedCount: clamped, intervalCount: intervals.length });
+        setResult({ ...est, params, samplePointCount: points.length, droppedCount: dropped, clampedCount: clamped, beyondTraceCount: beyondTrace, rawStats, intervalCount: intervals.length });
         setAdded(false); setAddedSupport(false); // a fresh run invalidates both "Added ✓" states
       } catch (e) {
         setError(e.cancelled ? "Estimation cancelled." : (e.message || "Estimation failed."));
@@ -455,7 +454,11 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
 
           {result && (
             <div style={{ padding: 10, background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, fontSize: "var(--font-size-base)", color: "var(--color-text-strong)", display: "flex", flexDirection: "column", gap: 6 }}>
-              <div>{result.samplePointCount} sample point(s) placed ({result.intervalCount} interval(s), {result.droppedCount} dropped — no collar/survey to place them{result.clampedCount ? `; ${result.clampedCount} negative grade(s) clamped to zero` : ""}).</div>
+              <div>{result.samplePointCount} sample point(s) placed ({result.intervalCount} interval(s), {result.droppedCount} dropped — no collar/survey to place them{result.beyondTraceCount ? `, ${result.beyondTraceCount} of them deeper than the hole's trace` : ""}{result.clampedCount ? `; ${result.clampedCount} negative grade(s) clamped to zero` : ""}).</div>
+              {/* TASKS.csv #571 */}
+              {result.rawStats && (result.rawStats.duplicatesSkipped > 0 || result.rawStats.overlappingRows > 0) && (
+                <div>Raw assays: {result.rawStats.duplicatesSkipped} exact duplicate row(s) left out; {result.rawStats.overlappingRows} overlapping row(s) resolved into segments at the mean of the overlapping results.</div>
+              )}
               <div>{result.blocksEstimated.toLocaleString()} block(s) estimated, {result.blocksSkipped.toLocaleString()} left un-estimated (no sample within search radius / below min-samples / below min distinct holes).</div>
               {/* TASKS.csv #258 */}
               {/* TASKS.csv #516 — say how MLS (linear) actually ran */}

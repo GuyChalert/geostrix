@@ -17,7 +17,7 @@ import { makeRng, perturbPoints, perturbOrientation, pointsToMeshDistance, sprea
 import { colorForLithology, colorForAlteration, colorForStructure, minMax, roleForLithology } from "../../lib/layers.js";
 import { computeMeshVolume } from "../../lib/volumetrics.js";
 import { MAX_BLOCKS, SUPPORT_COLORS } from "../../lib/estimationMeta.js"; // #552 — the estimator itself loads in the run functions
-import { compositeDownhole, capAudit, capAuditText } from "../../lib/geochem.js"; // capAudit: #533
+import { compositeDownhole, rawSampleIntervals, capAudit, capAuditText } from "../../lib/geochem.js"; // capAudit: #533; rawSampleIntervals: #571
 import { excludeQAQC } from "../../lib/qaqc.js";
 import { errorNotice } from "../../lib/notices.js";
 import { searchEllipsoidBasis, filterBySearchSupport, anisoScales, anisoWarpPoint, invScales, anisoWarpDirection, medianCollarSpacing, autoHaloParams, splitIntervalForSampling, spatialClusters, sampleTerrainElevation } from "../../lib/viewer/geomath.js";
@@ -1328,7 +1328,7 @@ export function useModelling(ctx) {
         // no collar, which is luck rather than design — a field duplicate logged under its PARENT
         // hole's id was genuinely double-counted.
         const srcAssays = numericIncludeQAQC ? assays : excludeQAQC(assays);
-        let intervals;
+        let intervals, rawStats = null;
         if (numericUseComposites) {
           // TASKS.csv #259 — high-grade capping. compositeDownhole has always accepted capValue and
           // applied it per RAW sample before length-weighted averaging (the correct order), but only
@@ -1340,13 +1340,12 @@ export function useModelling(ctx) {
           });
         } else {
           const cap = Number.isFinite(numericCapValue) && numericCapValue > 0 ? numericCapValue : null;
-          intervals = srcAssays
-            .filter((a) => a.hole_id != null && a.from != null && a.to != null)
-            .map((a) => ({ hole_id: a.hole_id, from: a.from, to: a.to, avgGrade: a.values?.[symbol] != null ? a.values[symbol] : null }))
-            .filter((iv) => iv.avgGrade != null)
-            .map((iv) => (cap != null && iv.avgGrade > cap ? { ...iv, avgGrade: cap } : iv));
+          // TASKS.csv #571 — duplicates / overlaps resolved, values in `unit`, as in compositing
+          const raw = rawSampleIntervals(srcAssays, symbol, unit, elementUnits, { capValue: cap });
+          intervals = raw.intervals;
+          rawStats = raw.stats;
         }
-        const { points: rawPoints, dropped, clamped } = samplePointsFromIntervals(intervals, collars, survey, desurveyHole, desurveyMethod); // #135
+        const { points: rawPoints, dropped, clamped, beyondTrace } = samplePointsFromIntervals(intervals, collars, survey, desurveyHole, desurveyMethod); // #135
         if (!rawPoints.length) throw new Error("No sample points could be placed in 3D — check that holes have collars and (ideally) survey data.");
         // TASKS.csv #273 — this tool used to ignore the model domain and the anisotropy trend entirely,
         // so a user who had set up either for the categorical tools silently got neither here. The
@@ -1495,7 +1494,7 @@ export function useModelling(ctx) {
         const id = `impl_${Date.now()}_numeric_${symbol}`;
         implicitMeshesRef.current[id] = mesh;
         setImplicitSurfaces((p) => [...p, { id, name: label, visible: true, vertexCount: mc.vertices.length, faceCount: mc.faces.length, type: "mineralization_envelope", relationships: [], closure, params, surfaceSupportCounts: surfCounts, supportColored: false }]); // surfaceSupportCounts/supportColored: TASKS.csv #91
-        setNotices((p) => [...p, `Added "${label}": ${points.length} sample point${points.length === 1 ? "" : "s"} (${intervals.length} ${numericUseComposites ? `${numericCompositeLength} m composite` : "raw interval"}${intervals.length === 1 ? "" : "s"}, ${dropped} dropped, ${above} at/above cutoff${clamped ? `, ${clamped} negative grade${clamped === 1 ? "" : "s"} clamped to zero` : ""}) → ${grid.nx}×${grid.ny}×${grid.nz} grid (${grid.estimated.toLocaleString()} cells estimated, ${grid.skipped.toLocaleString()} outside the search radius${grid.singleHoleCells ? `, ${grid.singleHoleCells.toLocaleString()} informed by only ONE hole` : ""}) → ${mc.vertices.length.toLocaleString()} vertices / ${mc.faces.length.toLocaleString()} faces${vol.watertight ? `, closed (${vol.volumeM3.toLocaleString(undefined, { maximumFractionDigits: 0 })} m³)` : `, open (${vol.openEdgeCount} open edges — shell reaches the edge of the estimated region)`}. Exploration target volume only — not a Mineral Resource.`]);
+        setNotices((p) => [...p, `Added "${label}": ${points.length} sample point${points.length === 1 ? "" : "s"} (${intervals.length} ${numericUseComposites ? `${numericCompositeLength} m composite` : "raw interval"}${intervals.length === 1 ? "" : "s"}${rawStats && (rawStats.duplicatesSkipped || rawStats.overlappingRows) ? ` after ${rawStats.duplicatesSkipped} exact duplicate(s) left out and ${rawStats.overlappingRows} overlapping row(s) resolved` : ""}, ${dropped} dropped${beyondTrace ? ` (${beyondTrace} deeper than the hole's trace)` : ""}, ${above} at/above cutoff${clamped ? `, ${clamped} negative grade${clamped === 1 ? "" : "s"} clamped to zero` : ""}) → ${grid.nx}×${grid.ny}×${grid.nz} grid (${grid.estimated.toLocaleString()} cells estimated, ${grid.skipped.toLocaleString()} outside the search radius${grid.singleHoleCells ? `, ${grid.singleHoleCells.toLocaleString()} informed by only ONE hole` : ""}) → ${mc.vertices.length.toLocaleString()} vertices / ${mc.faces.length.toLocaleString()} faces${vol.watertight ? `, closed (${vol.volumeM3.toLocaleString(undefined, { maximumFractionDigits: 0 })} m³)` : `, open (${vol.openEdgeCount} open edges — shell reaches the edge of the estimated region)`}. Exploration target volume only — not a Mineral Resource.`]);
         // TASKS.csv #533 — say what the cap did: samples cut and share of metal removed (on the same QC-excluded raw samples)
         if (Number.isFinite(numericCapValue) && numericCapValue > 0) setNotices((p) => [...p, `"${label}" ${capAuditText(capAudit(srcAssays, symbol, unit, elementUnits, numericCapValue), unit)}.`]);
         // TASKS.csv #91/#92 — say what the model is actually supported by, for the whole grid and for

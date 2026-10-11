@@ -26,8 +26,11 @@ const EXACT_D2 = 1e-6;
 // Turn composited (or raw) downhole intervals into world-space sample points {x,y,z,value,hole_id,from,to}
 // by desurveying each hole once and interpolating each interval's midpoint depth along the trace.
 // Composites/intervals whose hole has no collar, or whose midpoint falls outside the hole's traced
-// range, are silently skipped (not enough information to place them in 3D) — the caller is told how
-// many were dropped so that isn't a silent gap.
+// range, are skipped (not enough information to place them in 3D) — the caller is told how many were
+// dropped (`dropped`, of which `beyondTrace` were deeper than the trace) so that isn't a silent gap.
+// TASKS.csv #571 — "outside the traced range" was not actually checked: pointOnTrace clamps a depth past the
+// end of the trace onto the trace's last point, so a sample deeper than the hole's length (a typo, a wrong
+// hole, a hole with no length whose trace stops at its last survey) was stacked at the bottom of the hole.
 // `method` (TASKS.csv #135) is the project's selected desurvey method, forwarded verbatim to the
 // injected desurveyHole — estimation samples MUST sit on the same trace the 3D view draws, or an
 // isosurface silently stops lining up with the holes that produced it. Omitting it falls back to
@@ -41,6 +44,7 @@ export function samplePointsFromIntervals(intervals, collars, survey, desurveyHo
   const points = [];
   let dropped = 0;
   let clamped = 0; // TASKS.csv #270 (LOW-4)
+  let beyondTrace = 0; // TASKS.csv #571
   intervals.forEach((iv) => {
     if (iv.from == null || iv.to == null || iv.avgGrade == null) { dropped++; return; }
     if (!traceCache.has(iv.hole_id)) {
@@ -50,6 +54,7 @@ export function samplePointsFromIntervals(intervals, collars, survey, desurveyHo
     const trace = traceCache.get(iv.hole_id);
     if (!trace || !trace.length) { dropped++; return; }
     const mid = (iv.from + iv.to) / 2;
+    if (mid > trace[trace.length - 1].md + 0.01 || mid < trace[0].md - 0.01) { dropped++; beyondTrace++; return; } // #571
     const p = pointOnTrace(trace, mid);
     if (!p) { dropped++; return; }
     // TASKS.csv #270 (LOW-4) — a negative grade is a data error (validateAssays already flags them as
@@ -68,7 +73,7 @@ export function samplePointsFromIntervals(intervals, collars, survey, desurveyHo
       domain: iv.domain != null ? iv.domain : null, // TASKS.csv #260 — kept for domain-restricted search
     });
   });
-  return { points, dropped, clamped };
+  return { points, dropped, clamped, beyondTrace };
 }
 
 // Alternative entry point: sample directly from raw assay rows (no compositing) — useful for a quick
