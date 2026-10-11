@@ -6097,11 +6097,18 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     const showTerrain = scope.showTerrain != null ? scope.showTerrain : true;
     if (terrain && showTerrain) {
       const dist = Math.hypot(b.x - a.x, b.y - a.y);
-      const STEPS = 100;
+      // TASKS.csv #573 — sampled at the DEM's own cell size (was a fixed 100 points: every 50 m on a 5 km section,
+      // cutting ridges / gullies a 30 m SRTM or 1 m LiDAR grid has, and the planned-collar snap interpolated across
+      // them), at least 100 and at most 2000 points per section — bilinear lookups, once per section build.
+      const [txmin, tymin, txmax, tymax] = terrain.bbox;
+      const cell = Math.min((txmax - txmin) / Math.max(1, terrain.gridW - 1), (tymax - tymin) / Math.max(1, terrain.gridH - 1));
+      const STEPS = Math.max(100, Math.min(2000, Math.ceil(dist / Math.max(cell, 1e-6))));
       const pts = [];
       for (let i = 0; i <= STEPS; i++) {
         const t = i / STEPS;
         const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+        // #573 — off the terrain the sampler returns the nearest edge value: leave a gap, not a flat fake ground
+        if (x < txmin || x > txmax || y < tymin || y > tymax) continue;
         const el = sampleTerrainElevation(terrain, x, y);
         if (Number.isFinite(el)) pts.push({ d: dist * t, z: el });
       }
