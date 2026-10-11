@@ -5,6 +5,7 @@ import { guessEpsgFromPrjWkt } from "../reproject.js";
 import { isElementColumn } from "../geochem.js"; // TASKS.csv #600
 // TASKS.csv #552 — the KML / xlsx / shapefile readers load on first use (they were ~20 kB of startup JavaScript)
 const loadKml = () => import("../kml.js");
+const loadLas = () => import("../las.js"); // TASKS.csv #492 — on demand
 const loadXlsx = () => import("../xlsx.js");
 const loadShapefile = () => import("../shapefile.js");
 import { num, isOverturnedValue, targetFromName, guessTargetFor } from "../layers.js";
@@ -166,6 +167,14 @@ async function readLooseShapefile(file) {
 
 export function parseVectorFile(file, onDone, chosenLayer = null) {
   const name = file.name.toLowerCase();
+  // TASKS.csv #492 — a LAS downhole log: one table (hole_id, depth, one column per curve) for the normal dialog
+  if (name.endsWith(".las")) {
+    Promise.all([file.text(), loadLas()]).then(([text, { parseLAS }]) => {
+      const r = parseLAS(text, file.name);
+      onDone(r.rows, null, { headers: r.headers, note: r.note });
+    }).catch((err) => onDone(null, err.message));
+    return;
+  }
   // TASKS.csv #424 — KML/KMZ waypoints and tracks: lon/lat rows with the source CRS set to EPSG:4326
   // (KML is always WGS84), so the normal import step reprojects them to the project CRS.
   if (name.endsWith(".kml") || name.endsWith(".kmz")) {

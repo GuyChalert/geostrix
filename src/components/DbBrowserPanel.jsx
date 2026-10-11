@@ -17,7 +17,7 @@ import { activateOnKey } from "../lib/a11y.js"; // TASKS.csv #238 — Enter/Spac
 // as importable in the Browser tree at all — a QGIS user treats the Browser as the one place to pull
 // in ANY supported file. The routing per extension lives in ViewerModule's importBrowserFile (the
 // `onImportFile` prop), which dispatches to the handler each format already had.
-const IMPORTABLE_EXT = [".csv", ".zip", ".shp", ".gpkg", ".tif", ".tiff", ".gxf", ".dxf"];
+const IMPORTABLE_EXT = [".csv", ".zip", ".shp", ".gpkg", ".tif", ".tiff", ".gxf", ".dxf", ".las"]; // .las: TASKS.csv #492
 
 // TASKS.csv #282 — bounds for the Postgres table import below. Found independently by BOTH the
 // security and Micromine specialist reviews: #255 correctly removed the old hard `LIMIT 500` (a real

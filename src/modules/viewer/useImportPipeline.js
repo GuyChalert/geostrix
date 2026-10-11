@@ -573,10 +573,10 @@ export function useImportPipeline(ctx) {
     // import them: they go to those same handlers (importBrowserFile / importSolidFile), outside the table queue.
     const direct = grouped.files.filter((f) => /\.(tiff?|gxf|dxf|obj)$/i.test(f.name));
     for (const f of direct) { if (/\.obj$/i.test(f.name)) importSolidFile(f); else await importBrowserFile(f); }
-    let files = grouped.files.filter((f) => /\.(csv|zip|gpkg|shp|kml|kmz|xlsx)$/i.test(f.name)); // kml/kmz: #424, xlsx: #605
+    let files = grouped.files.filter((f) => /\.(csv|zip|gpkg|shp|kml|kmz|xlsx|las)$/i.test(f.name)); // kml/kmz: #424, xlsx: #605, las: #492
     const skipped = grouped.files.length - files.length - direct.length + grouped.unmatched.length;
     if (!files.length) {
-      if (!direct.length) setNotices((p) => [...p, "Only .csv, .xlsx, .zip (shapefile), .shp, .gpkg, .kml/.kmz, GeoTIFF / .gxf grids and .dxf / .obj files can be dropped in directly."]);
+      if (!direct.length) setNotices((p) => [...p, "Only .csv, .xlsx, .zip (shapefile), .shp, .gpkg, .kml/.kmz, .las logs, GeoTIFF / .gxf grids and .dxf / .obj files can be dropped in directly."]);
       else if (skipped) setNotices((p) => [...p, `${skipped} unrecognized file(s) skipped.`]);
       return;
     }
