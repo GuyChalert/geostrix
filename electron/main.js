@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, protocol } = require("electron"); // session: TASKS.csv #300; shell: TASKS.csv #310; protocol: #562
+const { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, protocol, clipboard } = require("electron"); // session: TASKS.csv #300; shell: TASKS.csv #310; protocol: #562
 // User-reported bug: "there's a bug on the app that won't let me close it. I can only close it ending
 // the task" — App.jsx's beforeunload handler correctly calls e.preventDefault() when a tab has unsaved
 // changes (the standard web pattern, meant to trigger a native "leave site?" confirm), but Electron
@@ -1006,6 +1006,9 @@ function buildMenu() {
       label: "Help",
       submenu: [
         { label: "Keyboard Shortcuts", accelerator: "CmdOrCtrl+/", click: () => mainWindow?.webContents.send("menu", "shortcuts") },
+        // TASKS.csv #591 — the startup check is network contact the user didn't start (camp satellite links,
+        // firewalled laptops, "offline and private"): it can be switched off; the manual check stays
+        { label: "Check for Updates at Startup", type: "checkbox", checked: readPrefs().checkUpdatesAtStartup !== false, click: (item) => writePrefs({ checkUpdatesAtStartup: item.checked }) },
         { label: "Check for Updates…", click: () => { manualCheckInFlight = true; autoUpdater.checkForUpdates().catch((err) => { manualCheckInFlight = false; mainWindow?.webContents.send("updater-event", { event: "error", message: err.message, manual: true }); }); } },
         // Bug fix while touching this menu: "About GeoStrix" sent a "menu"/"about" action that nothing
         // on the renderer side ever handled — clicking it silently did nothing. Now shares the same
@@ -1061,8 +1064,28 @@ app.on("second-instance", () => {
   mainWindow.focus();
 });
 
+// TASKS.csv #591 — small app preferences that the main process needs before any window exists (userData/prefs.json)
+function prefsPath() { return path.join(app.getPath("userData"), "prefs.json"); }
+function readPrefs() { try { return JSON.parse(fs.readFileSync(prefsPath(), "utf8")) || {}; } catch { return {}; } }
+function writePrefs(patch) { try { fs.writeFileSync(prefsPath(), JSON.stringify({ ...readPrefs(), ...patch }, null, 2)); } catch { /* a read-only profile: the choice lasts this session */ } }
+
+// TASKS.csv #589 — Electron grants every web permission by default (camera, microphone, screen capture,
+// geolocation, notifications, clipboard, HID / serial / USB pickers). GeoStrix uses none of them: ALL are refused,
+// so a compromised renderer or a hostile page loaded by mistake can't ask for them. The one clipboard use ("Copy
+// details") goes through the copy-text IPC below — navigator.clipboard.writeText reaches Electron as a
+// "clipboard-read" request, and allowing that would also let a page READ the clipboard.
+const ALLOWED_PERMISSIONS = new Set();
+ipcMain.handle("copy-text", (_e, text) => { clipboard.writeText(String(text ?? "").slice(0, 1_000_000)); return { ok: true }; });
+function lockDownPermissions() {
+  const s = session.defaultSession;
+  s.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
+  s.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+  s.setDevicePermissionHandler(() => false);
+}
+
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return; // #556 — quitting; never open a second window
+  lockDownPermissions(); // #589
   setTileUserAgent(); // TASKS.csv #300 — before any window exists, so the first tile request carries it
   if (!isDev) registerAppProtocol(); // #562
   createMainWindow();
@@ -1071,7 +1094,7 @@ app.whenReady().then(async () => {
   // A short delay so the startup update check doesn't compete with the app's own initial render/
   // autosave-recovery-prompt work for network priority on a slow connection — same reasoning as any
   // other "let the app feel responsive first" deferred background task.
-  if (app.isPackaged) setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
+  if (app.isPackaged && readPrefs().checkUpdatesAtStartup !== false) setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000); // #591 — unless switched off
 });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });

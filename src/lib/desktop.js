@@ -152,6 +152,12 @@ export function onMenu(cb) {
   return () => { if (typeof window !== "undefined") window.removeEventListener("geostrix-menu-gesture", onGesture); offIpc?.(); };
 }
 // TASKS.csv #617 — the payload this section window was opened with (null in a browser / before main has one)
+// TASKS.csv #589 — copy to the clipboard: through the main process in the desktop app (web permissions are all
+// refused there), the async Clipboard API in a plain browser.
+export async function copyText(text) {
+  if (d?.copyText) return d.copyText(text);
+  try { await navigator.clipboard.writeText(text); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
+}
 export async function getSectionData() {
   return d?.getSectionData ? d.getSectionData() : null;
 }

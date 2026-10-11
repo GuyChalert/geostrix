@@ -17,7 +17,7 @@ import { desurveyHole, surveyAzimuthDipAt } from "../lib/desurvey.js";
 import { confirmDestructive } from "../lib/confirmDestructive.js"; // TASKS.csv #386
 import { decodeNoDataMask, isNoData } from "../lib/demFill.js"; // TASKS.csv #421
 import { blockToCells, modelledIntervals, ABOVE_TOPS } from "../lib/modelCheck.js"; // TASKS.csv #356
-import { openSectionWindow, saveFile } from "../lib/desktop.js";
+import { openSectionWindow, saveFile, copyText } from "../lib/desktop.js"; // copyText: TASKS.csv #589
 import { sectionFromCentre, sectionThroughHole, fenceLines } from "../lib/sectionDefs.js";
 import { Ribbon, RibbonGroup, RibbonButton, TaskPaneHeader, RIBBON_TONES } from "../components/Ribbon.jsx"; // TASKS.csv #458
 import { Layers, Group, Droplets, Waves, Gem, Calculator, Settings, FileSpreadsheet, Globe, Spline, Rows3, Crosshair, Target, SquareSplitVertical, LayoutTemplate } from "../components/icons.js"; // TASKS.csv #445 step 4 — memoised lucide icons // #458 ribbon icons
@@ -8440,7 +8440,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
                 <div style={{ padding: "6px 10px", color: "var(--color-text-muted)", fontSize: "var(--font-size-sm)", whiteSpace: "pre-line", borderBottom: "1px solid var(--color-border)", marginBottom: 4 }}>{contextMenu.hit.tip}</div>
                 <ContextItem label="Zoom here" onClick={() => { zoomToPoint(contextMenu.hit.point); setContextMenu(null); }} />
                 <ContextItem label={`Hide ${contextMenu.hit.holeId}`} onClick={() => { toggleHole(contextMenu.hit.holeId); setContextMenu(null); }} />
-                <ContextItem label="Copy details" onClick={() => { navigator.clipboard?.writeText(contextMenu.hit.tip); setContextMenu(null); }} />
+                <ContextItem label="Copy details" onClick={() => { copyText(contextMenu.hit.tip); setContextMenu(null); }} />
                 <ContextItem label="Zoom to selected area…" onClick={() => { setSectionMode(false); setMeasureMode(null); setRectZoomMode(true); setContextMenu(null); }} />
                 <ContextItem label="Zoom to fit all" onClick={() => { zoomToFitAll(); setContextMenu(null); }} />
                 <ContextItem label="Reset orientation" onClick={() => { resetView(); setContextMenu(null); }} />
