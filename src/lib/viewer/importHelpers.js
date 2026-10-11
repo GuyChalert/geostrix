@@ -60,6 +60,24 @@ export function normNumericInterval(r, mapping, customFields) {
   }, r, customFields);
 }
 
+// TASKS.csv #584 — what the strike column did on a downhole structure import, for the notice (the outcrop importer,
+// mapLayers.parseStructureRows, already reports this): how many dip directions were DERIVED from strike by the
+// right-hand rule (strike + 90), and how many rows carry both and disagree with that rule by more than 2° (a
+// left-hand-rule or dip-quadrant convention the file didn't state).
+export function strikeStats(rows, mapping) {
+  let derived = 0, mismatches = 0;
+  if (!mapping.strike) return { derived, mismatches };
+  for (const r of rows) {
+    const strike = num(r[mapping.strike]);
+    if (!Number.isFinite(strike)) continue;
+    const dd = mapping.azimuth ? num(r[mapping.azimuth]) : NaN;
+    if (!Number.isFinite(dd)) { derived++; continue; }
+    const d = ((((dd - (strike + 90)) % 360) + 360) % 360);
+    if (d > 2 && d < 358) mismatches++;
+  }
+  return { derived, mismatches };
+}
+
 export function normStructure(r, mapping, customFields, dipConvention) {
   // TASKS.csv #426 — dip must be 0-90 and dip direction 0-360; anything else is dropped to "unknown"
   // (NaN) and counted by the caller, instead of a dip of -30 plotting as a horizontal plane. A negative

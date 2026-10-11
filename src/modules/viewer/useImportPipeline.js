@@ -18,7 +18,7 @@ import { buildLayer } from "../../lib/mapLayerBuild.js"; // TASKS.csv #609
 import { askAdoptCrs } from "../../lib/adoptCrs.js"; // TASKS.csv #607
 import { requestProjectCrs } from "../../lib/projectCrsRequest.js"; // TASKS.csv #615
 import { LAYER_META, TARGET_SCHEMAS, guessColumn, guessColumnExact, guessMapping, guessTargetFor, schemaSatisfied, num, replaceRowsByHole, replaceNote, EPSG_COL_ALIASES, diffCollarImport, mergeCollar, minMax, pickRankedCollarRows } from "../../lib/layers.js";
-import { normInterval, applyCustomFields, normNumericInterval, normStructure, loadRaster, looksLikeAssay, parseVectorFile, groupShapefileParts, orderImportFiles } from "../../lib/viewer/importHelpers.js"; // groupShapefileParts / orderImportFiles: #600
+import { normInterval, applyCustomFields, normNumericInterval, normStructure, strikeStats, loadRaster, looksLikeAssay, parseVectorFile, groupShapefileParts, orderImportFiles } from "../../lib/viewer/importHelpers.js"; // groupShapefileParts / orderImportFiles: #600
 
 export function useImportPipeline(ctx) {
   const {
@@ -402,6 +402,10 @@ export function useImportPipeline(ctx) {
       // TASKS.csv #426 — say how many orientations were out of range (dropped to unknown, not guessed).
       const badDip = mapping.dip ? allRows.filter((r) => { const d = num(r[mapping.dip]); return Number.isFinite(d) && (dipConvention === "neg_down" ? Math.abs(d) > 90 : (d < 0 || d > 90)); }).length : 0;
       if (badDip) setNotices((p) => [...p, `${fileName}: ${badDip} structure dip(s) outside 0-90° were set to unknown.`]);
+      { // TASKS.csv #584 — say what the strike column did
+        const ss = strikeStats(allRows, mapping);
+        if (ss.derived || ss.mismatches) setNotices((p) => [...p, `${fileName}:${ss.derived ? ` ${ss.derived} dip direction(s) derived from strike by the right-hand rule (dip direction = strike + 90°).` : ""}${ss.mismatches ? ` ${ss.mismatches} row(s) have a strike and a dip direction that are not 90° apart (right-hand rule) — the dip direction was used; check whether those strikes follow another convention.` : ""}`]);
+      }
       const keep = batchRowsRef.current;
       const replaced = replaceRowsByHole(importStateRef.current.layers?.structure, rows, keep);
       setLayers((p) => ({ ...p, structure: replaceRowsByHole(p.structure, keepBatch(rows), keep).rows })); // TASKS.csv #336

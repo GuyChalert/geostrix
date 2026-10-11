@@ -71,6 +71,7 @@ import { legendScale } from "../lib/legendScale.js"; // TASKS.csv #498
 import { corridorRuns, mdInRuns } from "../lib/sectionCorridor.js"; // TASKS.csv #499
 import { slabRuns, piercePoints, tracePolylines, pointAtMd, voxelPlanRects, meshPlanCut } from "../lib/levelPlan.js"; // TASKS.csv #525
 import { ghostStrings } from "../lib/sectionDigitise.js"; // TASKS.csv #519
+import { trueNorthBearingInGridDeg } from "../lib/inversion.js"; // TASKS.csv #577 (already in the startup chunk via compactRows)
 import { unitShell, meshVolume } from "../lib/unitVolumes.js"; // TASKS.csv #517
 import ModellingCodesPane from "../components/ModellingCodesPane.jsx"; // TASKS.csv #599
 import { LAYER_META, colorForLithology, rqdColor, magColor, hashColor, distinctValues, minMax, colorForVoxelValue, makeVoxelColorResolverRGB, roleForLithology, isCrossCuttingRole, colorForMedium, classifyBreaks, paletteColorsHex, PALETTES, CATEGORICAL_SAFE_COLORS } from "../lib/layers.js";
@@ -5628,7 +5629,9 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           // exported attribute in the same negative-down convention every other file in this app uses,
           // so the round-trip is lossless and an opened-in-QGIS attribute table matches what the user
           // actually typed.
-          attributes: { hole_id: c.hole_id, azimuth: c.azimuth ?? null, dip: Number.isFinite(c.dip) ? -c.dip : null, length: c.length ?? null },
+          // TASKS.csv #577 — stored azimuths are GRID bearings (project CRS); say so in the field name and give the
+          // true-north bearing beside it (grid = true + convergence), so QGIS / a re-import can't take one for the other
+          attributes: { hole_id: c.hole_id, azim_grid: c.azimuth ?? null, azim_true: Number.isFinite(c.azimuth) && project?.epsg ? (() => { const cv = trueNorthBearingInGridDeg(c.x, c.y, project.epsg); return Number.isFinite(cv) ? +((((c.azimuth - cv) % 360) + 360) % 360).toFixed(2) : null; })() : null, dip: Number.isFinite(c.dip) ? -c.dip : null, length: c.length ?? null },
         })),
         geomType: "point",
       };
