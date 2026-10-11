@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import { buildMeshQuery, isPointInsideMesh, isMeshClosed } from "../lib/meshQuery.js"; // TASKS.csv #517
 import { X, Play } from "./icons.js";
 import { compositeDownhole, PRECIOUS_METALS, capAudit } from "../lib/geochem.js";
 import CapAuditHint from "./CapAuditHint.jsx"; // TASKS.csv #533
@@ -21,7 +22,7 @@ import { arrMin, arrMax } from "../lib/arrayStats.js"; // TASKS.csv #371 — no 
 // Edge are built around. Depends on downhole compositing (#118, implemented alongside this) as its
 // input — see lib/estimation.js's top comment for why kriging isn't offered here (needs a fitted
 // variogram as a genuine prerequisite, not just a harder formula dropped into the same loop).
-export default function GradeEstimationModal({ assays, assayElements, layers, collars, survey, onAddModel, onClose }) {
+export default function GradeEstimationModal({ assays, assayElements, layers, collars, survey, onAddModel, onClose, volumeShells = [] }) {
   useEscapeKey(onClose); // TASKS.csv #238
   useFocusTrap(); // TASKS.csv #238
   const { desurveyMethod } = useStore(); // TASKS.csv #135 — estimation samples must sit on the same trace the 3D view draws
@@ -105,6 +106,7 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
   const [includeQAQC, setIncludeQAQC] = useState(false); // TASKS.csv #266
   const [restrictToDomain, setRestrictToDomain] = useState(false); // TASKS.csv #260
   const [classifySupport, setClassifySupport] = useState(true); // TASKS.csv #91/#92
+  const [shellId, setShellId] = useState(""); // TASKS.csv #517 — restrict to a closed modelled volume ("" = none)
   const [modelName, setModelName] = useState("");
   const [result, setResult] = useState(null); // { cells, blocksEstimated, blocksSkipped, grid, samplePointCount, droppedCount } | null
   const [error, setError] = useState("");
@@ -174,8 +176,21 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
             .filter((iv) => iv.avgGrade != null)
             .map((iv) => (cap != null && iv.avgGrade > cap ? { ...iv, avgGrade: cap } : iv));
         }
-        const { points, dropped, clamped } = samplePointsFromIntervals(intervals, collars, survey, desurveyHole, desurveyMethod); // #135
-        if (!points.length) { setError("No sample points could be placed in 3D — check that holes have collars and (ideally) survey data."); setRunning(false); return; }
+        let { points, dropped, clamped } = samplePointsFromIntervals(intervals, collars, survey, desurveyHole, desurveyMethod); // #135
+        // TASKS.csv #517 — a hard boundary at a closed modelled volume: only samples inside it inform the estimate,
+        // and only blocks whose centre is inside it are kept (a block outside is not estimated, not set to zero)
+        let inShell = null, shellInfo = null;
+        if (shellId) {
+          const sh = (volumeShells || []).find((v) => v.id === shellId);
+          const closed = sh ? isMeshClosed(sh.positions, sh.indices) : null;
+          if (!sh || !closed?.closed) { setError(sh ? `"${sh.name}" is not a closed solid (${closed.boundaryEdges} open edges) — it has no inside to restrict to.` : "That volume is no longer in the project."); setRunning(false); return; }
+          const q = buildMeshQuery(sh.positions, sh.indices);
+          inShell = (p) => isPointInsideMesh(q, p);
+          const before = points.length;
+          points = points.filter((p) => inShell(p));
+          shellInfo = { name: sh.name, samplesInside: points.length, samplesOutside: before - points.length };
+        }
+        if (!points.length) { setError(shellInfo ? `No ${symbol} samples fall inside "${shellInfo.name}".` : "No sample points could be placed in 3D — check that holes have collars and (ideally) survey data."); setRunning(false); return; }
         // TASKS.csv #292 — an unbounded search makes every sample a candidate for every block
         // (measured: 81 s of blocked main thread at 62,500 blocks x 5,000 points). 0 now means "cap at
         // the grid's own diagonal", which is a mathematical no-op but a real computational bound.
@@ -205,6 +220,12 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
           desurveyMethod: desurveyMethod || "minimum curvature", samplePoints: points.length, generatedAt: new Date().toISOString(),
         };
         if (est.mlsCounts) params.mlsBlocks = est.mlsCounts; // #516 — how the linear trend was fitted
+        if (inShell) { // #517
+          const before = est.cells.length;
+          est.cells = est.cells.filter((c) => inShell(c));
+          est.blocksSkipped += before - est.cells.length; est.blocksEstimated = est.cells.length;
+          params.restrictedToVolume = `${shellInfo.name}: ${shellInfo.samplesInside} sample(s) inside used, ${shellInfo.samplesOutside} outside left out; ${before - est.cells.length} block(s) outside it dropped`;
+        }
         setResult({ ...est, params, samplePointCount: points.length, droppedCount: dropped, clampedCount: clamped, intervalCount: intervals.length });
         setAdded(false); setAddedSupport(false); // a fresh run invalidates both "Added ✓" states
       } catch (e) {
@@ -344,6 +365,17 @@ export default function GradeEstimationModal({ assays, assayElements, layers, co
               </>
             )}
           </div>
+
+          {/* TASKS.csv #517 — a modelled unit volume (or an imported closed solid) as a hard domain boundary */}
+          {volumeShells.length > 0 && (
+            <label style={fieldLabel} title="Only samples inside this closed solid inform the estimate, and only blocks whose centre is inside it are kept — e.g. Au inside the modelled DACT. Build unit volumes from an implicit model (3D Modeling, after a stack run: Add unit volumes).">
+              Restrict to a modelled volume
+              <select value={shellId} onChange={(e) => setShellId(e.target.value)} style={inp} aria-label="Restrict to a modelled volume">
+                <option value="">— none (whole grid) —</option>
+                {volumeShells.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </label>
+          )}
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label style={fieldLabel} title="Extends the block grid beyond the collar bounding box in every direction, so blocks near the edge of the drilling aren't starved of nearby samples.">

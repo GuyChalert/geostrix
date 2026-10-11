@@ -71,6 +71,7 @@ import { legendScale } from "../lib/legendScale.js"; // TASKS.csv #498
 import { corridorRuns, mdInRuns } from "../lib/sectionCorridor.js"; // TASKS.csv #499
 import { slabRuns, piercePoints, tracePolylines, pointAtMd, voxelPlanRects, meshPlanCut } from "../lib/levelPlan.js"; // TASKS.csv #525
 import { ghostStrings } from "../lib/sectionDigitise.js"; // TASKS.csv #519
+import { unitShell, meshVolume } from "../lib/unitVolumes.js"; // TASKS.csv #517
 import ModellingCodesPane from "../components/ModellingCodesPane.jsx"; // TASKS.csv #599
 import { LAYER_META, colorForLithology, rqdColor, magColor, hashColor, distinctValues, minMax, colorForVoxelValue, makeVoxelColorResolverRGB, roleForLithology, isCrossCuttingRole, colorForMedium, classifyBreaks, paletteColorsHex, PALETTES, CATEGORICAL_SAFE_COLORS } from "../lib/layers.js";
 import { computeMeshVolume, computeTonnage } from "../lib/volumetrics.js";
@@ -3237,6 +3238,20 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // no-op for a one-element group.
   // TASKS.csv #356 — see lastLithBlock.
   const lithUnitColor = (lb, name) => lb.units.find((u) => u.name === name)?.color || colorForLithology(name);
+  // TASKS.csv #517 — closed model solids (unit volumes, imported solids) in WORLD coordinates for Grade estimation's
+  // "restrict to a modelled volume": [{ id, name, positions (E, N, Z), indices }]. Open surfaces are left out.
+  const closedShellsForEstimation = () => {
+    const o = originRef.current;
+    return (implicitSurfaces || []).filter((sf) => sf.type === "unit_volume" || sf.type === "imported").flatMap((sf) => {
+      const mesh = implicitMeshesRef.current[sf.id];
+      const pos = mesh?.geometry?.attributes?.position?.array;
+      if (!pos) return [];
+      const n = pos.length / 3, w = new Float64Array(pos.length);
+      for (let i = 0; i < n; i++) { w[i * 3] = pos[i * 3] + o.x; w[i * 3 + 1] = o.y - pos[i * 3 + 2]; w[i * 3 + 2] = pos[i * 3 + 1] + o.z; }
+      const idx = mesh.geometry.index ? mesh.geometry.index.array : Uint32Array.from({ length: n }, (_, i) => i);
+      return [{ id: sf.id, name: sf.name, positions: w, indices: idx }];
+    });
+  };
   const addLithBlockModel = () => {
     const lb = lastLithBlock; if (!lb) return;
     const cells = blockToCells(lb.block, lb.origin);
@@ -3245,6 +3260,42 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     const legend = stops.map((st) => `${st.value} = ${st.label}`).join(", ");
     addVoxelModel({ name: `Model units: ${lb.title} (${lb.when})`, source: "gempy", cells, colorMode: "discrete", stops, valueLabels: Object.fromEntries(stops.map((st) => [st.value, st.label])) });
     setNotices((p) => [...p, `Added the model's lithology block as a block model: ${cells.length.toLocaleString()} cells (${legend}). Cells above every modelled top are left out. It is the model, not the logs: see the Model check message for how far they agree.`]);
+  };
+  // TASKS.csv #517 — each modelled unit as a CLOSED shell (the outer faces of its cells, closed at the model box — exact volume at the model cell size):
+  // listed with the model surfaces, exportable as DXF / OBJ, cut on sections and plans, measured by the volume
+  // readout, and usable to restrict a grade estimate ("inside modelled DACT").
+  const addUnitVolumes = () => {
+    const lb = lastLithBlock; if (!lb) return;
+    const o = originRef.current, stamp = Date.now(), added = [], lines = [];
+    lb.block.labels.forEach((label, k) => {
+      if (label == null) return;
+      // the block is in the model's API frame; lb.origin is the world origin it was built with
+      const s = unitShell(lb.block, label, lb.origin);
+      if (!s) return;
+      const w = s.positions, scene = new Float32Array(w.length);
+      for (let i = 0; i < w.length; i += 3) { scene[i] = w[i] - o.x; scene[i + 1] = w[i + 2] - o.z; scene[i + 2] = o.y - w[i + 1]; }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(scene, 3));
+      geo.setIndex(new THREE.BufferAttribute(s.indices, 1));
+      geo.computeVertexNormals();
+      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(lithUnitColor(lb, label)), side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+      const mesh = new THREE.Mesh(geo, mat);
+      const vol = meshVolume(w, s.indices);
+      const nTris = s.indices.length / 3, nVerts = w.length / 3;
+      mesh.userData = { tip: `${label} — unit volume (${lb.title})\n${(vol / 1e6).toFixed(2)} Mm³ inside the model box, ${nTris} triangles` };
+      implicitGroupRef.current?.add(mesh);
+      const id = `impl_${stamp}_unitvol_${k}`;
+      implicitMeshesRef.current[id] = mesh;
+      added.push({
+        id, name: `${label} volume (${lb.title.replace(/^stack /, "")}, ${lb.when})`, visible: true, vertexCount: nVerts, faceCount: nTris,
+        type: "unit_volume", relationships: [], closure: "closed",
+        params: { tool: "unit volume from the implicit model's lithology block", unit: label, model: lb.title, builtAt: lb.when, cells: s.cells, cellVolumeM3: +s.cellVolume.toFixed(3), cellsVolumeM3: Math.round(s.blockVolume), shellVolumeM3: Math.round(vol), note: "Cut at the model box: a unit that continues beyond it is closed there." },
+      });
+      lines.push(`${label} ${(vol / 1e6).toFixed(2)} Mm³`);
+    });
+    if (!added.length) { setNotices((p) => [...p, "The last model has no modelled unit cells inside its box — no volumes to build."]); return; }
+    setImplicitSurfaces((p) => [...p, ...added]);
+    setNotices((p) => [...p, `Added ${added.length} closed unit volume(s) from ${lb.title}: ${lines.join(", ")} (inside the model box — a unit that continues beyond it is closed at the box). They are listed with the model surfaces: export, sections, the volume readout and "Restrict to a modelled volume" in Grade estimation work on them.`]);
   };
   const addModelledLayer = () => {
     const lb = lastLithBlock; if (!lb) return;
@@ -7698,6 +7749,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         {lastLithBlock && (
           <div style={{ margin: "8px 0 4px", padding: "8px 10px", border: "1px solid var(--color-border)", borderRadius: 6, background: "var(--color-bg-subtle)", fontSize: "var(--font-size-sm)" }}>
             <div style={{ color: "var(--color-text)", marginBottom: 6 }}>Last model ({lastLithBlock.title}, {lastLithBlock.when}){lastLithBlock.matchedPct != null ? ` reproduces ${lastLithBlock.matchedPct}% of the logged metres` : ""}.</div>
+            <button onClick={addUnitVolumes} style={{ ...pBtn, marginBottom: 4 }} title="Each modelled unit as a closed solid (its cells, closed at the model box): export as DXF / OBJ, volume / tonnage, cut on sections and plans, and a domain for grade estimation"><Box size={14} /> Add unit volumes (closed)</button>
             <button onClick={addLithBlockModel} style={{ ...pBtn, marginBottom: 4 }} title="The model's units as a block model: 3D view, slice/cutoff controls and cross-sections, like any other block model. The space above every modelled top is left out."><Box size={14} /> Add as block model</button>
             <button onClick={addModelledLayer} style={{ ...pBtn, marginBottom: 0 }} title="An interval layer with the unit the model puts at each logged litho interval — shown next to the logged litho in the strip log, and on the holes in 3D / sections."><Layers3 size={14} /> Add "modelled unit" layer to holes</button>
           </div>
@@ -8576,6 +8628,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           layers={layers}
           collars={collars}
           survey={survey}
+          volumeShells={closedShellsForEstimation()}
           onAddModel={(model) => { const id = addVoxelModel(model); setNotices((p) => [...p, `Added block model "${model.name}" (${model.cells.length.toLocaleString()} cells).`]); return id; }}
           onClose={() => setGradeEstOpen(false)}
         />
