@@ -164,6 +164,12 @@ export const colors = {
 // Numbers, not "10px" strings, because that is the form those consumers want (ctx.font arithmetic,
 // SVG attribute values); append "px" at the call site if you need a CSS string.
 // KEEP IN SYNC WITH app.css — change a value in one, change it in the other.
+// TASKS.csv #585 — the PRINT scale, for text drawn on a Layout page (and images made to be placed on one). The
+// five-step fontSizes above are SCREEN sizes; the page used ad-hoc 6 / 6.4 / 7.5 / 8.25 / 13.5 pt literals, the
+// smallest under the legibility floor of a plotted A4 / A3. Points, as the page renders them: 1 pt = 96/72 px.
+export const printPt = { caption: 7, small: 8, body: 10, label: 12, heading: 16 };
+export const printPx = (pt) => Math.round(((pt * 96) / 72) * 100) / 100;
+
 export const fontSizes = {
   xs: 10, // captions, counts, units, badges
   sm: 11, // secondary labels, uppercase section captions
