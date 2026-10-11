@@ -49,6 +49,7 @@ import { Ribbon, RibbonGroup, RibbonButton, TaskPaneHeader } from "../components
 import { Zap as RZap, Radar as RRadar, Magnet as RMagnet, Mountain as RMountain, Shapes as RShapes, Map as RMapIcon, Globe as RGlobe, Flag as RFlag, Settings2 as RSettings2, Package as RPackage, Box as RBox } from "../components/icons.js";
 import { activateOnKey } from "../lib/a11y.js"; // TASKS.csv #238 — Enter/Space on clickable non-button elements
 import { arrMin, arrMax } from "../lib/arrayStats.js"; // TASKS.csv #371 — no Math.min/max(...spread)
+import { unreadableFormatAdvice } from "../lib/unreadableFormats.js"; // TASKS.csv #603
 
 // TASKS.csv #309 — the format reference that USED to be this tab's entire empty state: a twelve-line
 // centre-aligned block of ~10px grey prose that the design review flagged as reference material
@@ -885,6 +886,10 @@ export default function GeophysicsModule() {
         const gxfs = files.filter((f) => /\.gxf$/i.test(f.name));
         const plys = files.filter((f) => /\.(ply|dxf)$/i.test(f.name));
         const xyzs = files.filter((f) => /\.xyz$/i.test(f.name));
+        // TASKS.csv #603 — a closed format (Geosoft .gdb / binary .grd, .dwg, Access) says how to get it out; such
+        // files used to be ignored here without a word
+        const advice = files.map((f) => unreadableFormatAdvice(f.name)).filter(Boolean);
+        if (advice.length) setRasterError({ info: true, text: advice.join(" ") });
         // A dropped .tif is ambiguous between a raster drape (#24) and a DEM (#77) — both are plain
         // georeferenced GeoTIFFs, nothing in the file format itself says which. Heuristic: a filename
         // that reads as elevation data goes to the dedicated terrain importer; anything else keeps the

@@ -19,6 +19,7 @@ import { askAdoptCrs } from "../../lib/adoptCrs.js"; // TASKS.csv #607
 import { requestProjectCrs } from "../../lib/projectCrsRequest.js"; // TASKS.csv #615
 import { LAYER_META, TARGET_SCHEMAS, guessColumn, guessColumnExact, guessMapping, guessTargetFor, schemaSatisfied, num, replaceRowsByHole, replaceNote, EPSG_COL_ALIASES, diffCollarImport, mergeCollar, minMax, pickRankedCollarRows } from "../../lib/layers.js";
 import { normInterval, applyCustomFields, normNumericInterval, normStructure, strikeStats, loadRaster, looksLikeAssay, parseVectorFile, groupShapefileParts, orderImportFiles } from "../../lib/viewer/importHelpers.js"; // groupShapefileParts / orderImportFiles: #600
+import { unreadableFormatAdvice } from "../../lib/unreadableFormats.js"; // TASKS.csv #603
 
 export function useImportPipeline(ctx) {
   const {
@@ -578,9 +579,12 @@ export function useImportPipeline(ctx) {
     const direct = grouped.files.filter((f) => /\.(tiff?|gxf|dxf|obj)$/i.test(f.name));
     for (const f of direct) { if (/\.obj$/i.test(f.name)) importSolidFile(f); else await importBrowserFile(f); }
     let files = grouped.files.filter((f) => /\.(csv|zip|gpkg|shp|kml|kmz|xlsx|las)$/i.test(f.name)); // kml/kmz: #424, xlsx: #605, las: #492
-    const skipped = grouped.files.length - files.length - direct.length + grouped.unmatched.length;
+    // TASKS.csv #603 — a closed format (Geosoft .gdb / .grd, .dwg, Access) gets the way out, not "unrecognized"
+    const advised = grouped.files.map((f) => unreadableFormatAdvice(f.name)).filter(Boolean);
+    if (advised.length) setNotices((p) => [...p, ...advised]);
+    const skipped = grouped.files.length - files.length - direct.length - advised.length + grouped.unmatched.length;
     if (!files.length) {
-      if (!direct.length) setNotices((p) => [...p, "Only .csv, .xlsx, .zip (shapefile), .shp, .gpkg, .kml/.kmz, .las logs, GeoTIFF / .gxf grids and .dxf / .obj files can be dropped in directly."]);
+      if (!direct.length && !advised.length) setNotices((p) => [...p, "Only .csv, .xlsx, .zip (shapefile), .shp, .gpkg, .kml/.kmz, .las logs, GeoTIFF / .gxf grids and .dxf / .obj files can be dropped in directly."]);
       else if (skipped) setNotices((p) => [...p, `${skipped} unrecognized file(s) skipped.`]);
       return;
     }
