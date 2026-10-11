@@ -9109,11 +9109,11 @@ function LayerRow({ label, count, visible, onToggle, onUpload, onInspect, onZoom
         {/* TASKS.csv #66 — inline expand (category chips + sources) without opening the full
             LayerInspector modal. Only offered once there's something to expand. */}
         {count > 0 && onToggleExpand ? (
-          <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onToggleExpand} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} title={expanded ? "Collapse" : "Expand"}>
+          <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onToggleExpand} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} title={expanded ? "Collapse" : "Expand"} aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`} aria-expanded={!!expanded}>{/* #596 */}
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </div>
         ) : <div style={{ width: 13, flexShrink: 0 }} />}
-        <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onToggle} style={{ cursor: "pointer", color: visible ? "var(--color-accent)" : "var(--color-text-disabled)" }} title={visible ? "Hide layer" : "Show layer"}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}</div>
+        <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onToggle} style={{ cursor: "pointer", color: visible ? "var(--color-accent)" : "var(--color-text-disabled)" }} title={visible ? "Hide layer" : "Show layer"} aria-label={`${visible ? "Hide" : "Show"} ${label}`}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}</div>
         <div style={{ flex: 1, minWidth: 0, fontSize: "var(--font-size-base)", color: visible ? "var(--color-text)" : "var(--color-text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
         {count > 0 && <Maximize2 size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} {...iconAction(onZoom, `Zoom to the ${label} layer`)} />}
         {count > 0 && <ListFilter size={14} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} {...iconAction(onInspect, `Filter / legend / sources for the ${label} layer (full view)`)} />}
@@ -9121,7 +9121,7 @@ function LayerRow({ label, count, visible, onToggle, onUpload, onInspect, onZoom
             inside the inspector (ListFilter above) — this is the "I don't want this tab's data at all
             anymore" case, the inspector handles "just pull out one of several CSVs I merged in". */}
         {count > 0 && onClear && <Trash2 size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} {...iconAction(onClear, `Remove all data from the ${label} layer`)} />}
-        <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onUpload} style={{ cursor: "pointer", fontSize: "var(--font-size-sm)", color: count ? "var(--color-accent)" : "var(--color-text-muted)", flexShrink: 0 }} title="Import CSV">{count ? `${count}` : <Upload size={12} />}</div>
+        <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onUpload} style={{ cursor: "pointer", fontSize: "var(--font-size-sm)", color: count ? "var(--color-accent)" : "var(--color-text-muted)", flexShrink: 0 }} title="Import CSV" aria-label={count ? `Import CSV into ${label} (${count} rows)` : `Import CSV into ${label}`}>{count ? `${count}` : <Upload size={12} />}</div>
         {input}
       </div>
       {expanded && children && (

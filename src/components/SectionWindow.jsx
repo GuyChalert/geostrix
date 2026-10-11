@@ -325,7 +325,7 @@ export default function SectionWindow() {
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: c.color, display: "inline-block" }} />
               {c.unit} <span style={{ color: "#65717e" }}>({c.kind === "fault" ? "fault" : c.kind === "string" ? "string" : "upper contact"}, {c.points.length} pts)</span>
               <Pencil role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label={`Edit the vertices of ${c.unit}`} size={12} style={{ cursor: "pointer", color: editingId === c.id ? "#b06a1f" : "#55606e" }} onClick={() => { setDrawing(false); setEditingId(editingId === c.id ? null : c.id); }}><title>Edit vertices: drag to move, Alt-click to delete, click the line to insert</title></Pencil>
-              <X role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label={`Remove ${c.unit}`} size={12} style={{ cursor: "pointer", color: "#8a5555" }} onClick={() => removeContact(c.id)} />
+              <X role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label={`Remove ${c.kind === "fault" ? "fault" : c.kind === "string" ? "string" : "contact"} "${c.unit}"`} size={12} style={{ cursor: "pointer", color: "#8a5555" }} onClick={() => removeContact(c.id)} />
             </div>
           ))}
         </div>

@@ -233,7 +233,10 @@ input, select { font-family: inherit; }
 .ge-tab.active { background: var(--color-bg-subtle); border-color: var(--color-selected-border); color: var(--color-text); }
 .ge-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ge-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); flex-shrink: 0; }
-.ge-tab-close { flex-shrink: 0; color: var(--color-text-muted); border-radius: 3px; }
+/* #596 — the tab's two sibling buttons, unstyled so the pill (.ge-tab) still looks the same */
+.ge-tab-switch { all: unset; display: flex; align-items: center; gap: 6px; min-width: 0; height: 100%; cursor: pointer; }
+.ge-tab-switch:focus-visible, .ge-tab-close:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; border-radius: 3px; }
+.ge-tab-close { all: unset; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; color: var(--color-text-muted); border-radius: 3px; }
 .ge-tab-close:hover { color: var(--color-danger-fg); background: #fdeceb; } /* #384 */
 .ge-tab-add {
   display: flex; align-items: center; justify-content: center;

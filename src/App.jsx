@@ -467,25 +467,18 @@ function WorkspaceTabBar({ tabs, activeTabId, activeDirty, activeName, onSwitch,
         const label = isActive ? activeName : t.name;
         const dirty = isActive ? activeDirty : t.dirty;
         return (
-          <div role="button" tabIndex={0} onKeyDown={activateOnKey}
-            key={t.id}
-            className={`ge-tab ${isActive ? "active" : ""}`}
-            aria-current={isActive ? "true" : undefined} // TASKS.csv #388
-            onClick={() => onSwitch(t.id)}
-            title={label}
-          >
-            {dirty && <span className="ge-tab-dot" title="Unsaved changes" />}
-            <span className="ge-tab-label">{label || "Untitled project"}</span>
-            <X
-              size={12}
-              className="ge-tab-close"
-              onClick={(e) => { e.stopPropagation(); onClose(t.id); }}
-              title="Close project"
-              role="button"
-              tabIndex={0}
-              aria-label={`Close ${label || "Untitled project"}`}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onClose(t.id); } }}
-            />
+          // TASKS.csv #596 — the switch and the close are SIBLING buttons (the close X used to be a role=button
+          // nested inside the tab's role=button: nested interactive controls, announced as one)
+          <div key={t.id} className={`ge-tab ${isActive ? "active" : ""}`} title={label}>
+            <button type="button" className="ge-tab-switch" onClick={() => onSwitch(t.id)}
+              aria-current={isActive ? "true" : undefined} // TASKS.csv #388
+              aria-label={`${label || "Untitled project"}${dirty ? " (unsaved changes)" : ""}`}>
+              {dirty && <span className="ge-tab-dot" title="Unsaved changes" />}
+              <span className="ge-tab-label">{label || "Untitled project"}</span>
+            </button>
+            <button type="button" className="ge-tab-close" onClick={() => onClose(t.id)} title="Close project" aria-label={`Close ${label || "Untitled project"}`}>
+              <X size={12} aria-hidden="true" />
+            </button>
           </div>
         );
       })}
