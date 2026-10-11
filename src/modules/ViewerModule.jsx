@@ -5681,11 +5681,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     try {
       const { buildShapefileZip } = await import("../lib/shapefile.js"); // #552 — on demand
       const zipBytes = buildShapefileZip({ features, geomType, epsg: project?.epsg, baseName: label });
-      saveFile({
+      const res = await saveFile({ // TASKS.csv #576 — awaited: success only when it was written
         suggestedName: `${label.replace(/[^a-z0-9_-]+/gi, "_").toLowerCase()}.zip`,
         filters: [{ name: "Shapefile (zipped)", extensions: ["zip"] }],
         content: uint8ToBase64(zipBytes), encoding: "base64",
       });
+      if (!res?.ok) { if (res?.error) throw new Error(res.error); return; } // cancelled: say nothing
       setNotices((p) => [...p, `Exported ${features.length} feature(s) from "${label}" as a shapefile (.zip — .shp/.shx/.dbf${project?.epsg ? "/.prj" : ""}).`]);
     } catch (err) {
       setNotices((p) => [...p, errorNotice(`Shapefile export failed: ${err.message}`)]);
@@ -5700,11 +5701,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     try {
       const tableName = label.replace(/[^a-zA-Z0-9_]+/g, "_") || "layer";
       const gpkgBytes = await (await loadGpkg()).buildGeoPackage([{ name: tableName, features, geomType, epsg: project?.epsg }]); // #439 lazy
-      saveFile({
+      const res = await saveFile({ // TASKS.csv #576 — awaited: success only when it was written
         suggestedName: `${label.replace(/[^a-z0-9_-]+/gi, "_").toLowerCase()}.gpkg`,
         filters: [{ name: "GeoPackage", extensions: ["gpkg"] }],
         content: uint8ToBase64(gpkgBytes), encoding: "base64",
       });
+      if (!res?.ok) { if (res?.error) throw new Error(res.error); return; } // cancelled: say nothing
       setNotices((p) => [...p, `Exported ${features.length} feature(s) from "${label}" as a GeoPackage (.gpkg).`]);
     } catch (err) {
       setNotices((p) => [...p, errorNotice(`GeoPackage export failed: ${err.message}`)]);
@@ -5720,11 +5722,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     try {
       const { buildDXF } = await import("../lib/dxf.js"); // #552 — on demand
       const dxfText = buildDXF({ features, geomType });
-      saveFile({
+      const res = await saveFile({ // TASKS.csv #576 — awaited: success only when it was written
         suggestedName: `${label.replace(/[^a-z0-9_-]+/gi, "_").toLowerCase()}.dxf`,
         filters: [{ name: "DXF", extensions: ["dxf"] }],
         content: dxfText,
       });
+      if (!res?.ok) { if (res?.error) throw new Error(res.error); return; } // cancelled: say nothing
       setNotices((p) => [...p, `Exported ${features.length} feature(s) from "${label}" as a DXF (.dxf, plan-view — elevation dropped).`]);
     } catch (err) {
       setNotices((p) => [...p, errorNotice(`DXF export failed: ${err.message}`)]);
