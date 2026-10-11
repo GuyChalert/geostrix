@@ -17,7 +17,7 @@ const isXlsxName = (name) => /\.xlsx$/i.test(String(name || "")); // TASKS.csv #
 import { buildLayer } from "../../lib/mapLayerBuild.js"; // TASKS.csv #609
 import { askAdoptCrs } from "../../lib/adoptCrs.js"; // TASKS.csv #607
 import { requestProjectCrs } from "../../lib/projectCrsRequest.js"; // TASKS.csv #615
-import { LAYER_META, TARGET_SCHEMAS, guessColumn, guessColumnExact, guessMapping, guessTargetFor, schemaSatisfied, num, replaceRowsByHole, EPSG_COL_ALIASES, diffCollarImport, mergeCollar, minMax, pickRankedCollarRows } from "../../lib/layers.js";
+import { LAYER_META, TARGET_SCHEMAS, guessColumn, guessColumnExact, guessMapping, guessTargetFor, schemaSatisfied, num, replaceRowsByHole, replaceNote, EPSG_COL_ALIASES, diffCollarImport, mergeCollar, minMax, pickRankedCollarRows } from "../../lib/layers.js";
 import { normInterval, applyCustomFields, normNumericInterval, normStructure, loadRaster, looksLikeAssay, parseVectorFile, groupShapefileParts, orderImportFiles } from "../../lib/viewer/importHelpers.js"; // groupShapefileParts / orderImportFiles: #600
 
 export function useImportPipeline(ctx) {
@@ -366,11 +366,11 @@ export function useImportPipeline(ctx) {
       // TASKS.csv #336 — a hole's survey in this file REPLACES its earlier survey (with _src stamped so
       // the layer inspector can tell imports apart); undo restores the old one.
       const keep = batchRowsRef.current;
-      const replaced = replaceRowsByHole(importStateRef.current.survey, rows, keep).replacedHoles; // for the notice only
+      const replaced = replaceRowsByHole(importStateRef.current.survey, rows, keep); // for the notice only (#582: replaced / appended)
       setSurvey((prev) => replaceRowsByHole(prev, keepBatch(rows), keep).rows);
       reorientAfter(new Set(rows.map((r) => r.hole_id)), replaceRowsByHole(importStateRef.current.survey, rows, keep).rows, null, fileName); // #548
       setNotices((p) => [...p, `Loaded ${rows.length} survey stations from ${fileName}.`
-        + (replaced.length ? ` Replaced the earlier survey of ${replaced.length} hole(s) (${replaced.slice(0, 6).join(", ")}${replaced.length > 6 ? ", …" : ""}) — Ctrl+Z to undo.` : "")
+        + replaceNote(replaced, "survey")
         + (bad.length ? ` Skipped ${bad.length} station(s) with a missing or non-numeric azimuth/dip (${[...new Set(bad.map((r) => `${r.hole_id}@${r.depth}`))].slice(0, 5).join(", ")}).` : "")
         + azs.note]);
     } else if (target === "structure") {
@@ -403,9 +403,9 @@ export function useImportPipeline(ctx) {
       const badDip = mapping.dip ? allRows.filter((r) => { const d = num(r[mapping.dip]); return Number.isFinite(d) && (dipConvention === "neg_down" ? Math.abs(d) > 90 : (d < 0 || d > 90)); }).length : 0;
       if (badDip) setNotices((p) => [...p, `${fileName}: ${badDip} structure dip(s) outside 0-90° were set to unknown.`]);
       const keep = batchRowsRef.current;
-      const replaced = replaceRowsByHole(importStateRef.current.layers?.structure, rows, keep).replacedHoles;
+      const replaced = replaceRowsByHole(importStateRef.current.layers?.structure, rows, keep);
       setLayers((p) => ({ ...p, structure: replaceRowsByHole(p.structure, keepBatch(rows), keep).rows })); // TASKS.csv #336
-      if (replaced.length) setNotices((p) => [...p, `${fileName}: replaced the earlier structure picks of ${replaced.length} hole(s) — Ctrl+Z to undo.`]);
+      if (replaced.replacedHoles.length || replaced.appendedHoles.length) setNotices((p) => [...p, `${fileName}:${replaceNote(replaced, "structure picks")}`]); // #582
       setLayerVisible((p) => ({ ...p, structure: true }));
       setNotices((p) => [...p, `Loaded ${rows.length} structure points from ${fileName}.`]);
     } else if (target === "custom") {
@@ -431,7 +431,7 @@ export function useImportPipeline(ctx) {
         : allRows.map((r) => normInterval(r, mapping, customFields)).filter((r) => r.hole_id && !isNaN(r.from))).map((r) => ({ ...r, _src: fileName }));
       // TASKS.csv #336 — rows for a hole already in this layer replace that hole's earlier rows.
       const keep = batchRowsRef.current;
-      const replaced = replaceRowsByHole(importStateRef.current.layers?.[target], rows, keep).replacedHoles;
+      const replaced = replaceRowsByHole(importStateRef.current.layers?.[target], rows, keep); // #582: replaced / appended
       setLayers((p) => ({ ...p, [target]: replaceRowsByHole(p[target], keepBatch(rows), keep).rows }));
       setLayerVisible((p) => ({ ...p, [target]: true }));
       if (numeric) { const vals = rows.map((r) => r.value); setNumericRange((p) => ({ ...p, [target]: minMax(vals) })); } // not Math.min/max(...) — see layers.js's minMax comment
@@ -442,7 +442,7 @@ export function useImportPipeline(ctx) {
         if (msg) setNotices((p) => [...p, msg]);
       }).catch(() => {});
       setNotices((p) => [...p, `Loaded ${rows.length} rows into ${LAYER_META[target].label} from ${fileName}.`
-        + (replaced.length ? ` Replaced the earlier rows of ${replaced.length} hole(s) (${replaced.slice(0, 6).join(", ")}${replaced.length > 6 ? ", …" : ""}) — Ctrl+Z to undo.` : "")]);
+        + replaceNote(replaced, "rows")]);
     }
     return true;
   };
