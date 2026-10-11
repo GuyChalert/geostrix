@@ -17,6 +17,7 @@ import {
   isElementColumn, inferUnit, pickElementColumns, parseAssayValue, valueIn, readAssayCell, convertUnit, mergeAssayRows, holesWithChangedIntervals, dropHoleAssays, blankDetectionLimit, isBlankAssayCell, protolithForSample, PROVISIONAL_ALTERATION_BOXES, GEOCHEM_LABELS, reeProfile,
   oxideOfHeader, fromOxideHeader, // TASKS.csv #403
 } from "../lib/geochem.js";
+import { mapInChunks } from "../lib/mapInChunks.js"; // TASKS.csv #583
 import GeochemPlot from "../components/GeochemPlot.jsx";
 import { lithologyBySample, lithologyCounts, NOT_LOGGED } from "../lib/sampleLithology.js"; // TASKS.csv #619
 import AssayImportModal from "../components/AssayImportModal.jsx";
@@ -277,7 +278,8 @@ export default function GeochemModule() {
     setCertReview(null);
   };
 
-  const commitAssayImport = (modal) => {
+  const commitAssayImport = async (modal) => {
+    if (modal.busy) return; // #583 — one import at a time (the row build below yields to the UI)
     const { format, allRows, mapping, selectedMethod, elements } = modal;
     const chosen = elements.filter((e) => e.checked);
     if (!mapping.hole_id || !mapping.from || !mapping.to) { setNotices((p) => [...p, "Map hole ID, from, and to columns."]); return; }
@@ -292,15 +294,17 @@ export default function GeochemModule() {
     const negativeMode = modal.negativeMode || "bdl";
     let negBdl = 0, negMissing = 0;
     const oxideNotes = new Set(); // #403
+    const oxideCache = new Map(); // #583 — per header, not per cell (2.3 M lookups on a 190,000-row file)
+    const oxideOf = (header) => { let o = oxideCache.get(header); if (o === undefined) { o = oxideOfHeader(header) || null; oxideCache.set(header, o); } return o; };
     const read = (raw, sym, header) => {
       const c = readAssayCell(raw, negativeMode);
       if (c.kind === "neg_bdl") negBdl++;
       else if (c.kind === "neg_missing") negMissing++;
       const e = chosenBySymbol.get(sym);
       // TASKS.csv #403 — an oxide column (SiO2, Fe2O3T...) is stored as element wt%.
-      const ox = oxideOfHeader(header);
+      const ox = oxideOf(header);
       if (ox && c.value != null) oxideNotes.add(`${ox.oxide} → ${ox.symbol} (÷${ox.factor})`);
-      const elemPct = fromOxideHeader(c.value, header);
+      const elemPct = ox ? fromOxideHeader(c.value, header) : c.value;
       return { v: e ? convertUnit(elemPct, ox ? "%" : e.unit, existingUnit[sym] || (ox ? "%" : e.unit)) : elemPct, q: c.qualifier };
     };
     // TASKS.csv #400 — keep a QC-type and a sample-id column when the file has them (acQuire / MX exports
@@ -343,7 +347,9 @@ export default function GeochemModule() {
       return read(`<${L.limit}`, sym, header);
     };
     if (format === "wide") {
-      rows = allRows.map((r) => {
+      // TASKS.csv #583 — built in chunks that yield to the UI (190,000 rows x 12 elements was a 1.45 s freeze)
+      if (allRows.length > 20000) setAssayModal((m) => (m ? { ...m, busy: true } : m));
+      rows = await mapInChunks(allRows, (r) => {
         const values = {};
         // TASKS.csv #261 — keep the censoring qualifier ('<' below detection / '>' over-range) alongside
         // the substituted number so the substitution stops being invisible downstream (dataQC warns on
@@ -352,11 +358,12 @@ export default function GeochemModule() {
         const valueSources = {}; // #542 — element -> the ore-grade column a value came from
         const anyResult = blankMode === "bdl" && chosen.some((e) => !isBlankAssayCell(r[e.header])); // #502
         chosen.forEach((e) => {
-          let { v, q } = read(r[e.header], e.symbol, e.header);
+          const cell = r[e.header]; // #583 — read once (a columnar row's value is a getter)
+          let { v, q } = read(cell, e.symbol, e.header);
           // #600 / #542 — a sample at the main column's cap takes its ore-grade re-assay (converted to the main
           // column's unit) when the file has one; only while the element still reads the auto-picked column
           const ol = e.overLimit && e.header === e.mainHeader ? e.overLimit : null;
-          if (ol && parseAssayValue(r[e.header]) === ol.limit) {
+          if (ol && parseAssayValue(cell) === ol.limit) {
             const og = parseAssayValue(r[ol.header]);
             if (og != null && Number.isFinite(og)) {
               v = convertUnit(og, ol.unit, existingUnit[e.symbol] || e.unit); q = null;
@@ -364,7 +371,7 @@ export default function GeochemModule() {
               valueSources[e.symbol] = ol.header;
             }
           }
-          if (v == null && anyResult && isBlankAssayCell(r[e.header])) ({ v, q } = blankAsBdl(e.symbol, e.header) || { v, q });
+          if (v == null && anyResult && isBlankAssayCell(cell)) ({ v, q } = blankAsBdl(e.symbol, e.header) || { v, q });
           if (v != null) {
             values[e.symbol] = v;
             if (q) quals[e.symbol] = q;
@@ -375,6 +382,7 @@ export default function GeochemModule() {
         if (Object.keys(valueSources).length) out.valueSources = valueSources; // #542 — which method each over-limit value is
         return tagQC(out, r);
       });
+      setAssayModal((m) => (m ? { ...m, busy: false } : m));
       const before = rows.length;
       rows = rows.filter(validInterval);
       skippedNoDepth = before - rows.length;
@@ -414,8 +422,10 @@ export default function GeochemModule() {
       if (ok) replaceHoles = changed;
     }
     const base = replaceHoles.length ? dropHoleAssays(assays, replaceHoles) : assays;
-    const { merged: mergedCount, repeatedInFile } = mergeAssayRows(base, rows); // for the notice only
-    setAssays((prev) => mergeAssayRows(replaceHoles.length ? dropHoleAssays(prev, replaceHoles) : prev, rows).rows);
+    // #583 — merged ONCE (it was run twice, ~0.3 s each on 190,000 rows); recomputed only if the store moved on
+    const mergeRes = mergeAssayRows(base, rows);
+    const { merged: mergedCount, repeatedInFile } = mergeRes;
+    setAssays((prev) => (prev === assays ? mergeRes.rows : mergeAssayRows(replaceHoles.length ? dropHoleAssays(prev, replaceHoles) : prev, rows).rows));
     // Existing elements keep their unit (#334); only new symbols add an entry.
     setAssayElements((prev) => { const merged = new Map(prev.map((e) => [e.symbol, e])); chosen.forEach((e) => { if (!merged.has(e.symbol)) merged.set(e.symbol, oxideOfHeader(e.header) ? { ...e, unit: "%" } : e); }); return Array.from(merged.values()); }); // #403: oxide-sourced elements are stored in %
     if (!colorElement && chosen.length) setColorElement((chosen.find((e) => e.symbol === "Au") || chosen[0]).symbol);

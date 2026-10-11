@@ -12,21 +12,36 @@ export default function AssayImportModal({ modal, onChange, onCancel, onCommit, 
   const checkedCount = modal.elements.filter((e) => e.checked).length;
   // TASKS.csv #333 — count negative numbers in the columns being imported, so the user decides what they
   // mean before they become grades.
+  // TASKS.csv #583 — counted per COLUMN once and cached (ticking an element re-sums, it doesn't rescan), with plain
+  // loops: the old flatMap built one array of every checked cell (12 x 190,000 = 2.3 M entries) on every tick.
+  const negByColumn = useMemo(() => new Map(), [modal.allRows]);
+  const negativesOf = (h) => {
+    let c = negByColumn.get(h);
+    if (!c) {
+      c = { codes: 0, sentinels: 0 };
+      const rows = modal.allRows;
+      for (let i = 0; i < rows.length; i++) { const v = parseAssayValue(rows[i][h]); if (v != null && v < 0) { if (v <= NO_DATA_SENTINEL_MAX) c.sentinels++; else c.codes++; } }
+      negByColumn.set(h, c);
+    }
+    return c;
+  };
   const negatives = useMemo(() => {
-    let codes = 0, sentinels = 0;
-    const cells = modal.format === "long"
-      ? modal.allRows.map((r) => r[modal.mapping.value])
-      : modal.elements.filter((e) => e.checked).flatMap((e) => modal.allRows.map((r) => r[e.header]));
-    cells.forEach((raw) => { const v = parseAssayValue(raw); if (v != null && v < 0) { if (v <= NO_DATA_SENTINEL_MAX) sentinels++; else codes++; } });
-    return { codes, sentinels };
+    const hs = modal.format === "long" ? [modal.mapping.value] : modal.elements.filter((e) => e.checked).map((e) => e.header);
+    return hs.reduce((t, h) => { const c = negativesOf(h); return { codes: t.codes + c.codes, sentinels: t.sentinels + c.sentinels }; }, { codes: 0, sentinels: 0 });
   }, [modal.allRows, modal.elements, modal.format, modal.mapping.value]);
   // TASKS.csv #502 — empty element cells (in rows that have at least one result: a row with none had nothing
   // analysed). The user says what they mean for this file; GeochemModule applies it.
   const blanks = useMemo(() => {
-    if (modal.format === "long") return modal.allRows.filter((r) => isBlankAssayCell(r[modal.mapping.value])).length;
+    const rows = modal.allRows;
+    if (modal.format === "long") { let n = 0; for (let i = 0; i < rows.length; i++) if (isBlankAssayCell(rows[i][modal.mapping.value])) n++; return n; }
     const cols = modal.elements.filter((e) => e.checked).map((e) => e.header);
     let n = 0;
-    modal.allRows.forEach((r) => { const empty = cols.filter((h) => isBlankAssayCell(r[h])).length; if (empty < cols.length) n += empty; });
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      let empty = 0;
+      for (let j = 0; j < cols.length; j++) if (isBlankAssayCell(r[cols[j]])) empty++;
+      if (empty < cols.length) n += empty;
+    }
     return n;
   }, [modal.allRows, modal.elements, modal.format, modal.mapping.value]);
   // TASKS.csv #334 — elements already in the project under a different unit get converted on import.
@@ -204,7 +219,7 @@ export default function AssayImportModal({ modal, onChange, onCancel, onCommit, 
 
         <div style={{ display: "flex", gap: 8, padding: "12px 16px", borderTop: "1px solid var(--color-border)" }}>
           <button onClick={onCancel} style={{ ...btn(false), flex: 1 }}>Cancel</button>
-          <button onClick={onCommit} style={{ ...btn(true), flex: 2 }}>Import {checkedCount} element{checkedCount === 1 ? "" : "s"}</button>
+          <button onClick={onCommit} disabled={!!modal.busy} style={{ ...btn(true), flex: 2, opacity: modal.busy ? 0.6 : 1 }}>{modal.busy ? "Importing…" : `Import ${checkedCount} element${checkedCount === 1 ? "" : "s"}`}</button>{/* busy: #583 */}
         </div>
       </div>
     </div>

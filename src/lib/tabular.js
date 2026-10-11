@@ -60,14 +60,22 @@ export function parseTableText(text, { comments = "#", columnar = false } = {}) 
 // `headers`). Only used where the caller opts in (the Geochem assay import), and only when it is provably the same
 // result: comma-delimited, no comma-decimal numbers, unique headers, every row the header's width. Anything else
 // returns null and the normal reader runs.
-const COLUMNAR_MIN_CHARS = 8_000_000;
+export const COLUMNAR_MIN_CHARS = 8_000_000; // exported for tabular.worker.js (#583)
 const FLOAT = /^\s*-?(\d+\.?|\.\d+|\d+\.\d+)([eE][-+]?\d+)?\s*$/; // Papa 5's own dynamic-typing rules
 const ISO_DATE = /^((\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z))|(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d([+-][0-2]\d:[0-5]\d|Z))|(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d([+-][0-2]\d:[0-5]\d|Z)))$/;
 const MAX_FLOAT = 2 ** 53;
 const IDX = Symbol("row");
 const K_NUM = 0, K_NULL = 1, K_OTHER = 2;
 
-export function parseTableColumns(text, { comments = "#" } = {}) {
+export function parseTableColumns(text, opts) {
+  const raw = parseColumnsRaw(text, opts);
+  return raw ? rowsFromColumns(raw) : null;
+}
+
+// TASKS.csv #583 — the two halves of parseTableColumns, split so the parse can run in a worker (tabular.worker.js):
+// parseColumnsRaw -> { headers, cols, n, errors } is plain data (typed arrays transferable, text arrays cloneable);
+// rowsFromColumns wraps it as the accessor rows on the thread that uses them (getters can't be posted).
+export function parseColumnsRaw(text, { comments = "#" } = {}) {
   if (QUOTED_COMMA_NUMBER.test(text)) return null;
   let headers = null, typed = null, cols = null, n = 0, cap = 4096, bad = false, delimiter = null;
   const errors = [];
@@ -113,6 +121,10 @@ export function parseTableColumns(text, { comments = "#" } = {}) {
   });
   void parser;
   if (bad || !headers) return null;
+  cols.forEach((c) => { delete c.pool; });
+  return { headers, cols, n, errors };
+}
+export function rowsFromColumns({ headers, cols, n, errors }) {
   const proto = {};
   headers.forEach((h, j) => {
     const c = cols[j];
@@ -123,16 +135,39 @@ export function parseTableColumns(text, { comments = "#" } = {}) {
   });
   const rows = new Array(n);
   for (let i = 0; i < n; i++) { const r = Object.create(proto); r[IDX] = i; rows[i] = r; }
-  cols.forEach((c) => { delete c.pool; });
   return { rows, headers, note: "", errors, columnar: true };
 }
 
 // A File/Blob (browser or Electron renderer) -> the same, plus a note when the encoding fallback was used.
-export async function parseTableFile(file, opts) {
-  const { text, encoding } = decodeTableBytes(await file.arrayBuffer());
-  const out = parseTableText(text, opts);
+// TASKS.csv #583 — a file of WORKER_MIN_BYTES or more is decoded and parsed in tabular.worker.js: a 14.7 MB /
+// 190,000-row assay export froze the window for 2.6 s here (2.05 s of it the parse). Same result either way; if a
+// worker can't start, the file is read on this thread as before.
+const WORKER_MIN_BYTES = 2_000_000;
+const encodingNote = (out, encoding) => {
   if (encoding !== "utf-8") out.note = `${out.note ? `${out.note} ` : ""}Read as Windows-1252 (the file is not UTF-8 — typical of an Excel export).`.trim();
   return { ...out, encoding };
+};
+function parseInWorker(buf, opts) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try { worker = new Worker(new URL("./tabular.worker.js", import.meta.url), { type: "module" }); } catch (err) { reject(err); return; }
+    worker.onmessage = (e) => {
+      worker.terminate();
+      const d = e.data || {};
+      if (d.type === "columns") resolve(encodingNote(rowsFromColumns(d.raw), d.encoding));
+      else if (d.type === "rows") resolve(encodingNote(d.out, d.encoding));
+      else reject(new Error(d.message || "The file reader stopped."));
+    };
+    worker.onerror = (e) => { e.preventDefault?.(); worker.terminate(); reject(new Error(e.message || "worker failed")); };
+    worker.postMessage({ buf, opts }, [buf]);
+  });
+}
+export async function parseTableFile(file, opts) {
+  if (typeof Worker !== "undefined" && file.size >= WORKER_MIN_BYTES) {
+    try { return await parseInWorker(await file.arrayBuffer(), opts || {}); } catch { /* read here instead */ }
+  }
+  const { text, encoding } = decodeTableBytes(await file.arrayBuffer());
+  return encodingNote(parseTableText(text, opts), encoding);
 }
 
 // Rows (objects, or { fields, data }) -> CSV text with correct quoting (commas, quotes, newlines).
