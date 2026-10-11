@@ -1191,7 +1191,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // tab's data. Targeting opens on its planned-holes pane (its main job). Reset when the tab changes.
   const [toolPane, setToolPane] = useState(mode === "targeting" ? "plan" : null);
   useEffect(() => { setToolPane(mode === "targeting" ? "plan" : null); }, [mode]);
-  const paneProps = (id) => ({ active: toolPane === id, onClick: () => setToolPane((p) => (p === id ? null : id)) });
+  const paneProps = (id) => ({ active: toolPane === id, expanded: toolPane === id, onClick: () => setToolPane((p) => (p === id ? null : id)) }); // expanded: #595
   const paneHeader = (title, icon, tone) => <TaskPaneHeader title={title} icon={icon} tone={tone} onClose={() => setToolPane(null)} />;
   // TASKS.csv #155 — QGIS-style toolbar (view mode only, this pass): which of the Grid/Themes
   // popovers is open, if any. Null closes both. The Database/QC/Boundary-intercepts/Snapshot toolbar
@@ -8855,7 +8855,7 @@ function ViewToolbar({
       <RibbonGroup label="View">
         <div className="ge-ribbon-cell">
           <HoverToolInfo title="Grid" text="Toggles the ground reference grid on or off, and lets you resize it, change its division spacing/color, or add two vertical wall grids for a full 3D reference box. Turn it off if it's cluttering a dense model or a figure you're about to snapshot." suppress={openPopover === "grid"}>
-            <button className={`ge-ribbon-btn ${openPopover === "grid" ? "active" : ""}`} aria-pressed={!!(openPopover === "grid")} onClick={() => toggle("grid")}><Grid3x3 size={22} strokeWidth={1.7} color={RIBBON_TONES.view} aria-hidden="true" /><span className="ge-ribbon-label">Grid</span></button>
+            <button className={`ge-ribbon-btn ${openPopover === "grid" ? "active" : ""}`} aria-expanded={openPopover === "grid"} aria-haspopup="dialog" onClick={() => toggle("grid")}><Grid3x3 size={22} strokeWidth={1.7} color={RIBBON_TONES.view} aria-hidden="true" /><span className="ge-ribbon-label">Grid</span></button>
           </HoverToolInfo>
           {openPopover === "grid" && (
             <div style={popoverStyle}>
@@ -8886,7 +8886,7 @@ function ViewToolbar({
         </div>
         <div className="ge-ribbon-cell">
           <HoverToolInfo title="Figure overlay" text="Draws a title, a legend of the categories currently switched on, and a scale bar over the 3D view, so a screenshot of this view can go straight into a report or a deck without being re-annotated. On by default; the setting is saved with the project. For a full report figure — page, north arrow, true-scale capture, PDF — use the Layout tab." suppress={openPopover === "figure"}>
-            <button className={`ge-ribbon-btn ${openPopover === "figure" ? "active" : ""}`} aria-pressed={!!(openPopover === "figure")} onClick={() => toggle("figure")}><LayoutTemplate size={22} strokeWidth={1.7} color={RIBBON_TONES.view} aria-hidden="true" /><span className="ge-ribbon-label">Figure</span></button>
+            <button className={`ge-ribbon-btn ${openPopover === "figure" ? "active" : ""}`} aria-expanded={openPopover === "figure"} aria-haspopup="dialog" onClick={() => toggle("figure")}><LayoutTemplate size={22} strokeWidth={1.7} color={RIBBON_TONES.view} aria-hidden="true" /><span className="ge-ribbon-label">Figure</span></button>
           </HoverToolInfo>
           {openPopover === "figure" && (
             <div style={{ ...popoverStyle, width: 268 }}>
@@ -8934,7 +8934,7 @@ function ViewToolbar({
         </div>
         <div className="ge-ribbon-cell">
           <HoverToolInfo title="Themes" text="Saves the current view — visible layers, active filters, grid settings, and camera position — as a named theme you can reload later with one click, or bind to a Viewport element on a Layout page so a report figure re-frames itself automatically." suppress={openPopover === "themes"}>
-            <button className={`ge-ribbon-btn ${openPopover === "themes" ? "active" : ""}`} aria-pressed={!!(openPopover === "themes")} onClick={() => toggle("themes")}><Bookmark size={22} strokeWidth={1.7} color={RIBBON_TONES.view} aria-hidden="true" /><span className="ge-ribbon-label">Themes</span></button>
+            <button className={`ge-ribbon-btn ${openPopover === "themes" ? "active" : ""}`} aria-expanded={openPopover === "themes"} aria-haspopup="dialog" onClick={() => toggle("themes")}><Bookmark size={22} strokeWidth={1.7} color={RIBBON_TONES.view} aria-hidden="true" /><span className="ge-ribbon-label">Themes</span></button>
           </HoverToolInfo>
           {openPopover === "themes" && (
             <div style={{ ...popoverStyle, width: 260 }}>

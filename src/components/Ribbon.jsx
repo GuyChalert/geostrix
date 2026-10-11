@@ -9,7 +9,7 @@
 // same on every tab (no layout jump when switching, the #309 lesson), while each module owns its buttons
 // and their state. A module that is mounted but hidden (ViewerModule stays mounted, #225) must not render
 // its ribbon — pass show={false}.
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "./icons.js";
 
@@ -45,7 +45,9 @@ export const RIBBON_TONES = {
 // TASKS.csv #566 — disabledReason: a disabled button that says what it needs ("Import assays first"). It stays in the
 // Tab order (aria-disabled, clicks ignored) with the reason first in its tooltip and accessible description; a
 // plain `disabled` button is skipped by the keyboard, so a screen-reader user never learned why it was off.
-export function RibbonButton({ icon: Icon, label, title, onClick, active = false, disabled = false, disabledReason, tone = "neutral", ariaLabel, children, buttonRef }) {
+// expanded (TASKS.csv #595): for a button that shows / hides a task pane or popover, aria-expanded instead of
+// aria-pressed, so a screen reader announces "expanded / collapsed" rather than a toggle.
+export function RibbonButton({ icon: Icon, label, title, onClick, active = false, expanded, disabled = false, disabledReason, tone = "neutral", ariaLabel, children, buttonRef }) {
   const soft = disabled && !!disabledReason;
   return (
     <div className="ge-ribbon-cell">
@@ -53,7 +55,8 @@ export function RibbonButton({ icon: Icon, label, title, onClick, active = false
         ref={buttonRef}
         type="button"
         className={`ge-ribbon-btn${active ? " active" : ""}${soft ? " is-disabled" : ""}`}
-        aria-pressed={active || undefined}
+        aria-pressed={expanded === undefined ? active || undefined : undefined}
+        aria-expanded={expanded}
         aria-label={ariaLabel || label}
         aria-disabled={soft || undefined}
         aria-description={soft ? disabledReason : undefined}
@@ -71,11 +74,24 @@ export function RibbonButton({ icon: Icon, label, title, onClick, active = false
 
 // Header for a tool shown in the sidebar (a "task pane"): its name and a close button that returns the
 // sidebar to the module's data.
+// TASKS.csv #595 — focus: a pane opened from a ribbon button takes focus to its title, so a keyboard user lands in
+// the pane instead of Tabbing through the rest of the ribbon; when it closes and focus would otherwise fall to
+// <body> (its close button just disappeared), focus goes back to the button that opened it.
 export function TaskPaneHeader({ title, onClose, icon: Icon, tone = "neutral" }) {
+  const titleRef = useRef(null);
+  useEffect(() => {
+    const opener = document.activeElement;
+    if (!opener?.closest?.(".ge-ribbon")) return undefined; // opened some other way (restored, a link): leave focus alone
+    titleRef.current?.focus();
+    return () => setTimeout(() => {
+      const a = document.activeElement;
+      if ((!a || a === document.body) && opener.isConnected) opener.focus();
+    }, 0);
+  }, []);
   return (
     <div className="ge-pane-header">
       {Icon && <Icon size={16} strokeWidth={1.8} color={RIBBON_TONES[tone] || tone} aria-hidden="true" />}
-      <span className="ge-pane-title">{title}</span>
+      <span ref={titleRef} tabIndex={-1} className="ge-pane-title">{title}</span>
       {onClose && <button type="button" className="ge-pane-close" onClick={onClose} aria-label={`Close ${title}`} title="Close — back to the data"><X size={14} /></button>}
     </div>
   );
