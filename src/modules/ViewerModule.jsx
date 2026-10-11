@@ -1089,6 +1089,37 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // View or 3D Modeling too, not just the Targeting tab where it's edited.
   const plannedGroupRef = useRef(null);
   const sectionStringsGroupRef = useRef(null); // TASKS.csv #519
+  // TASKS.csv #575 — keyboard path to the view's right-click menu (Zoom to fit all, Zoom to selected area, Reset
+  // orientation, background colour): the ContextMenu key or Shift+F10 on the focused 3D view opens it at the view's
+  // centre with the first item focused; arrows move, Escape closes and gives focus back to the view.
+  const viewFocusRef = useRef(null);
+  const contextMenuRef = useRef(null);
+  const contextMenuByKeyRef = useRef(false);
+  const onViewKeyDown = (e) => {
+    if (e.target !== e.currentTarget) return; // a control inside the view (Fit, Top…) keeps its own keys
+    if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;
+    e.preventDefault(); // no second, browser-dispatched contextmenu event
+    const r = e.currentTarget.getBoundingClientRect();
+    contextMenuByKeyRef.current = true;
+    setContextMenu({ x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), hit: null });
+  };
+  const menuItemsOf = (el) => [...(el?.querySelectorAll('[tabindex="0"], input, button') || [])];
+  const onContextMenuKeyDown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setContextMenu(null); return; }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = menuItemsOf(contextMenuRef.current);
+    if (!items.length) return;
+    const i = items.indexOf(document.activeElement);
+    items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+  };
+  useEffect(() => {
+    if (!contextMenuByKeyRef.current) return;
+    if (contextMenu) { menuItemsOf(contextMenuRef.current)[0]?.focus(); return; }
+    // closed (an item chosen, Escape, or a click outside): focus back on the view, not lost to <body>
+    contextMenuByKeyRef.current = false;
+    viewFocusRef.current?.focus();
+  }, [contextMenu]);
   const [showSectionStrings, setShowSectionStrings] = useState(true); // TASKS.csv #519
   const plannedMeshesRef = useRef({}); // id -> THREE.Group (line + toe marker)
   const measureGroupRef = useRef(null); // TASKS.csv #121 — line/polygon + vertex markers for the active measurement
@@ -8297,7 +8328,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       {/* TASKS.csv #389 — was role=button + activateOnKey, so Enter/Space fired a synthetic click with no
           pointer position and placed a bogus section/measure/pick point. The 3D view is a pointer surface,
           not a button: a labelled, focusable application region with no keyboard click. */}
-      <div role="application" aria-label="3D view" tabIndex={0} className="ge-main" onPointerDownCapture={(e) => { mcDownRef.current = { x: e.clientX, y: e.clientY }; }} onClick={(e) => { if (!isViewClick(e)) return; onSectionClick(e); onMeasureClick(e); onPickHoleClick(e); onMcodeClick(e); sculpt.handleViewClick(e); }} style={{ cursor: sectionMode || rectZoomMode || measureMode || pickHoleMode || (mcPickMode && mode === "modeling") || sculpt.targetId ? "crosshair" : "default" }}>
+      <div ref={viewFocusRef} role="application" aria-label="3D view" tabIndex={0} className="ge-main" onKeyDown={onViewKeyDown} onPointerDownCapture={(e) => { mcDownRef.current = { x: e.clientX, y: e.clientY }; }} onClick={(e) => { if (!isViewClick(e)) return; onSectionClick(e); onMeasureClick(e); onPickHoleClick(e); onMcodeClick(e); sculpt.handleViewClick(e); }} style={{ cursor: sectionMode || rectZoomMode || measureMode || pickHoleMode || (mcPickMode && mode === "modeling") || sculpt.targetId ? "crosshair" : "default" }}>
         <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
         {/* TASKS.csv #311 — figure furniture (title / legend / scale bar) for the screenshot people
             actually take. Rendered only once there is data to annotate, so the #294 empty state is
@@ -8444,7 +8475,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
 
       {contextMenu && (
         <div style={{ position: "fixed", inset: 0, zIndex: 55 }} onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, background: "var(--color-divider)", border: "1px solid var(--color-border-light)", borderRadius: 8, padding: 6, fontSize: "var(--font-size-base)", minWidth: 180, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+          <div ref={contextMenuRef} role="menu" aria-label="3D view menu" onKeyDown={onContextMenuKeyDown} onClick={(e) => e.stopPropagation()} style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, background: "var(--color-divider)", border: "1px solid var(--color-border-light)", borderRadius: 8, padding: 6, fontSize: "var(--font-size-base)", minWidth: 180, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
             {contextMenu.hit ? (
               <>
                 <div style={{ padding: "6px 10px", color: "var(--color-text-muted)", fontSize: "var(--font-size-sm)", whiteSpace: "pre-line", borderBottom: "1px solid var(--color-border)", marginBottom: 4 }}>{contextMenu.hit.tip}</div>
