@@ -351,6 +351,9 @@ export function useModelling(ctx) {
     // what share of the logged metres the model puts in the same unit, per unit and the worst holes.
     // Volumes are INSIDE the model extent only (a box around the data), so they are not unit sizes in the
     // ground, and nothing here is a resource.
+    // TASKS.csv #593 — the block was asked for but did not come back (an older engine, or the sync fallback before
+    // it forwarded the request): say why the model check, volumes and "Add as block model" are missing
+    if (!anisotropy.enabled && !res.block) setNotices((p) => [...p, "The Python engine did not return the model's lithology block, so the model check, unit volumes and \"Add as block model\" are not available for this run. Updating GeoStrix (its engine is bundled) brings them back."]);
     if (res.block) {
       const codeToUnit = new Map();
       specs.forEach((sp) => { if (!sp.mcode) (sp.codes || [sp.meshName]).forEach((c) => codeToUnit.set(c, sp.meshName)); });

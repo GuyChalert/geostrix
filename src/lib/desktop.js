@@ -526,7 +526,8 @@ export async function pythonImplicitModel(extent, surfaces, opts = {}) {
     ...(opts.faults?.length ? { faults: opts.faults } : {}), // TASKS.csv #360 — faults that offset the stack
   };
   const start = await startSidecarJob("implicit", request); // #515
-  if (!start.ok && start.status === 400 && /jobKind must be 'potential'\.?$/.test(start.error || "")) return pythonImplicitModelSync(extent, surfaces, opts);
+  // #593 — any "this sidecar doesn't know jobKind implicit" refusal (the old wording matched exactly before)
+  if (!start.ok && start.status === 400 && /jobKind/i.test(start.error || "") && !/implicit/i.test(start.error || "")) return pythonImplicitModelSync(extent, surfaces, opts);
   if (!start.ok) return { ok: false, error: start.error }; // #563 — the real reason (identity / timeout / unreachable / HTTP), unchanged
   const id = start.data.id;
   const deadline = Date.now() + 15 * 60 * 1000; // safety net only; Cancel is the real control now
@@ -572,6 +573,7 @@ async function pythonImplicitModelSync(extent, surfaces, opts = {}) {
         // TASKS.csv #274 — omitted entirely (not sent as 1) when the user leaves it on Auto, so the
         // request the sidecar sees is identical to a pre-#274 one in that case.
         ...(opts.rangeMultiplier ? { range_multiplier: opts.rangeMultiplier } : {}),
+        ...(opts.returnBlock ? { return_block: true } : {}), // TASKS.csv #593 — was not forwarded on this path
       }),
       // Real bug found here: this used to be 60s, and a fetch that hits an AbortSignal timeout
       // throws the exact same generic error as a genuinely-unreachable sidecar, so a slow-but-
@@ -598,7 +600,7 @@ async function pythonImplicitModelSync(extent, surfaces, opts = {}) {
     // TASKS.csv #274 — rangeUsed/rangeDefault/cO are what the run notice and the exported surface's
     // provenance report, so "why did this look different than last time" has an answer. Older sidecars
     // don't send them; undefined then, and every consumer treats that as "unknown".
-    return { ok: true, surfaces: data.surfaces, rangeUsed: data.range_used, rangeDefault: data.range_default, cO: data.c_o, orientationsDeduplicated: data.orientations_deduplicated ?? null }; // #512
+    return { ok: true, surfaces: data.surfaces, rangeUsed: data.range_used, rangeDefault: data.range_default, cO: data.c_o, block: data.block || null, orientationsDeduplicated: data.orientations_deduplicated ?? null }; // #512; block: #593
   } catch (err) {
     if (err?.code === "SIDECAR_IDENTITY") return { ok: false, error: err.message }; // #353
     // A user-triggered cancel (opts.signal aborted with this specific reason) gets its own quiet,
