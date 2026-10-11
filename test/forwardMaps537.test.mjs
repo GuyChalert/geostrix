@@ -29,3 +29,9 @@ test("#536 an overshoot is reported as the solver's step, and a chosen earlier i
   const ok = fitVerdict({ phi_d: 230, target: 225, iterations: 8, reachedTarget: true, fitChoice: { how: "earlier", overshot: true, lastPhi: 71.5, iteration: 7 } });
   assert.equal(ok.level, "ok"); assert.match(ok.text, /overshot to 0\.32x, so the model from iteration 7 is used/);
 });
+
+test("#581 the IP result gets its own verdict (a good DC fit no longer hides a failed IP fit)", () => {
+  const dc = fitVerdict({ phi_d: 100, target: 100, iterations: 6, reachedTarget: true });
+  const ip = fitVerdict({ phi_d: 300, target: 100, iterations: 20, reachedTarget: false });
+  assert.equal(dc.level, "ok"); assert.equal(ip.level, "under"); assert.match(ip.text, /3\.00x the target/);
+});

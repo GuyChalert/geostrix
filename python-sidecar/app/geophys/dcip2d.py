@@ -179,7 +179,9 @@ def run_job(req, progress):
                                         phi_fn=lambda m: float(np.sum(((eta_obs - ip_sim.dpred(m)) / ip_std) ** 2)),
                                         opt_factory=lambda: optimization.ProjectedGNCG(maxIter=1, lower=0.0, upper=1.0, cg_maxiter=30))
         ip_pred = ip_sim.dpred(m_ip)
-        out_ip = {"model": m_ip, "predicted": (ip_pred * 1000).tolist(), "phi_d": float(np.sum(((eta_obs - ip_pred) / ip_std) ** 2)),
+        ip_phi = float(np.sum(((eta_obs - ip_pred) / ip_std) ** 2))
+        # TASKS.csv #581 — the IP fit gets its own status, judged the same way as the DC one
+        out_ip = {"model": m_ip, "predicted": (ip_pred * 1000).tolist(), "phi_d": ip_phi, "reachedTarget": ip_phi <= 1.05 * len(eta_obs), "iterations": len(hist_ip),
                   "history": hist_ip, "standardDeviation": (ip_std * 1000).tolist(), "fitChoice": fit_ip}
 
     keep_full = core & np.isin(np.arange(mesh.n_cells), np.flatnonzero(active))

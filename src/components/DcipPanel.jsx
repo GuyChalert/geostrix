@@ -21,6 +21,12 @@ import { parseStationFile, matchStationLine, fitStationLine, stationGroundProfil
 import { reprojectXY, getProj4DefSync } from "../lib/reproject.js";
 
 const num = (v) => (v === "" || v == null ? NaN : Number(v));
+// TASKS.csv #581 — the IP inversion's own verdict (fitVerdict on its phi_d; older saved sections have no reachedTarget,
+// fitVerdict then judges by the ratio)
+const ipFitOf = (result) => {
+  const v = fitVerdict({ phi_d: result.ip.phi_d, target: result.target, reachedTarget: result.ip.reachedTarget, iterations: result.ip.iterations ?? result.ip.history?.length ?? 0, fitChoice: result.ip.fitChoice });
+  return { level: v.level, chi: +v.chi.toFixed(3), reachedTarget: v.level === "ok", verdict: v.text };
+};
 const FIELDS = [["a", "A (current)"], ["b", "B (current; blank = pole)"], ["m", "M (potential)"], ["n", "N (potential; blank = pole)"], ["rho", "Apparent resistivity (ohm·m)"], ["ip", "Chargeability (mV/V, optional)"]];
 
 export default function DcipPanel({ pBtn, numInput }) {
@@ -204,7 +210,7 @@ export default function DcipPanel({ pBtn, numInput }) {
           const cc = sectionCells(result, lineGeom, "chargeability", thick);
           const cv = cc.map((c) => c.value);
           addVoxelModelToTab(token, { ...common, name: `Chargeability (mV/V) — IP line ${name}`, property: "Chargeability (mV/V)", method: "ip", cells: cc, stops: sequentialStops(0, arrMax(cv)),
-            params: { ...common.params, fit: { ...common.params.fit, ip: { phiD: result.ip.phi_d, target: result.target } } } });
+            params: { ...common.params, fit: { ...common.params.fit, ip: { phiD: result.ip.phi_d, target: result.target, ...ipFitOf(result) } } } }); // #581 — its own verdict
         }
       },
     });
@@ -330,7 +336,9 @@ function SectionResult({ last, cutoff, epsg, pBtn }) {
   return (
     <div style={{ marginTop: 10 }}>
       <div className="ge-section-label">Result — {last.name}</div>
-      <div role="status" style={{ fontSize: "var(--font-size-xs)", color: verdict.level === "ok" ? "var(--color-text-secondary)" : "var(--color-danger-fg)" }}>Resistivity: {verdict.text}{result.ip ? ` Chargeability misfit ${(result.ip.phi_d / result.target).toFixed(2)}× the target.` : ""}</div>
+      <div role="status" style={{ fontSize: "var(--font-size-xs)", color: verdict.level === "ok" ? "var(--color-text-secondary)" : "var(--color-danger-fg)" }}>Resistivity: {verdict.text}</div>
+      {/* TASKS.csv #581 — chargeability judged on its own, in its own colour (a good DC fit used to paint a failed IP fit as fine) */}
+      {result.ip && (() => { const iv = ipFitOf(result); return <div role="status" style={{ fontSize: "var(--font-size-xs)", color: iv.level === "ok" ? "var(--color-text-secondary)" : "var(--color-danger-fg)" }}>Chargeability: {iv.verdict}</div>; })()}
       {c.chargeability && (
         <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
           {["resistivity", "chargeability"].map((f) => <button key={f} onClick={() => setField(f)} style={{ fontSize: "var(--font-size-xs)", padding: "2px 8px", border: "1px solid var(--color-border)", borderRadius: 4, background: f === field ? "var(--color-selected-bg)" : "var(--color-bg)", cursor: "pointer" }}>{f === "resistivity" ? "Resistivity" : "Chargeability"}</button>)}
