@@ -78,7 +78,7 @@ const SculptPanel = lazyModal(() => import("../components/SculptPanel.jsx")); //
 import { SUPPORT_COLORS, ESTIMATION_METHODS } from "../lib/estimationMeta.js"; // SUPPORT_*: TASKS.csv #91/#92
 import { PRECIOUS_METALS } from "../lib/geochem.js";
 const PlannedHoleTargeting = lazyModal(() => import("../components/PlannedHoleTargeting.jsx")); // TASKS.csv #476 // TASKS.csv #119 - target solver + planned-vs-as-drilled
-import { solveOrientationToTarget } from "../lib/holePlanning.js"; // TASKS.csv #119 - shared, Node-verified target math
+import { solveOrientationToTarget, plannedTrace } from "../lib/holePlanning.js"; // TASKS.csv #119 - shared, Node-verified target math; plannedTrace: #524
 import { drawMapLayer, mapTextureSize, mapStyleSignature, STRUCTURE_CLASS_COLORS, extractMapContacts, orientationAt, projectContactRibbon, thinLine, densifyLine } from "../lib/mapLayers.js"; // TASKS.csv #316-#318
 import { arrMin, arrMax } from "../lib/arrayStats.js"; // TASKS.csv #371 — no Math.min/max(...spread)
 import { noticeText, noticeLevel, errorNotice } from "../lib/notices.js"; // TASKS.csv #390
@@ -117,7 +117,9 @@ function plannedHoleTrace(hole) {
   // interval — and all four methods are provably IDENTICAL on a constant azimuth/inclination hole
   // (verified to 0.000e+0 m in #135's Node check). Passing the method here would be a no-op that
   // implied the plan's geometry depends on a setting it cannot depend on.
-  return desurveyHole({ ...hole, dip: -hole.dip }, []);
+  // TASKS.csv #524 — with an expected lift / drift the trace curves (minimum curvature through synthetic
+  // stations); holePlanning.plannedTrace is the one builder, so the 3D view, exports and targeting agree.
+  return plannedTrace(hole);
 }
 
 function stripInternalFields(r) { return Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("_"))); }
