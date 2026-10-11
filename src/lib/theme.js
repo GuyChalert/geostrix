@@ -135,6 +135,7 @@ export const colors = {
   // Danger / destructive / error (red)
   dangerBg: "#2a1f1f",
   dangerText: "#e0a0a0", // on the dark danger background only
+  dangerBgSoft: "#fdeceb", // TASKS.csv #579 — light flagged-row background (dangerBg is dark)
   dangerFg: "#b23a2e", // TASKS.csv #384 — danger text on light backgrounds (5.94:1 on white)
   dangerBorder: "#4a2f2f",
   dangerBorderStrong: "#5a2a2a", // an unmapped/invalid field's own border

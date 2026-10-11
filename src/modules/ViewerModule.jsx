@@ -9644,7 +9644,7 @@ function PlannedHoleChecks({ plannedHoles, collars, survey, voxelModels, desurve
       {results.map(({ hole, nearestReal, targetHits }) => {
         const tooClose = nearestReal && nearestReal.distance < minSpacing;
         return (
-          <div key={hole.id} style={{ padding: "6px 8px", marginBottom: 5, borderRadius: 5, background: tooClose ? "var(--color-danger-bg)" : "var(--color-bg-subtle)", border: `1px solid ${tooClose ? "var(--color-danger-border)" : "var(--color-border)"}`, fontSize: "var(--font-size-sm)" }}>
+          <div key={hole.id} style={{ padding: "6px 8px", marginBottom: 5, borderRadius: 5, background: tooClose ? "var(--color-danger-bg-soft)" : "var(--color-bg-subtle)", border: `1px solid ${tooClose ? "var(--color-danger-fg)" : "var(--color-border)"}`, fontSize: "var(--font-size-sm)" }}>
             <div style={{ color: "var(--color-text)", marginBottom: 2 }}>{hole.name || "Planned hole"}</div>
             {nearestReal ? (
               <div style={{ color: tooClose ? "var(--color-danger-fg)" : "var(--color-text-caption)" }}>

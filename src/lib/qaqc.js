@@ -175,14 +175,23 @@ function stripDuplicateMarker(hole_id, patterns) {
 // real hole_id); (3) the old name convention (strip "DUP" from the id). `minMean` drops pairs whose mean
 // is below it (RPD near the detection limit is noise — typically set to ~10x the detection limit): they
 // are returned with belowLimit: true so the table can show them greyed, and are left out of `summary`.
-export function duplicatePairs(assays, symbol, elementUnits, patterns = DEFAULT_QAQC_PATTERNS, { minMean = 0 } = {}) {
-  const originals = new Map(), bySampleId = new Map();
+// TASKS.csv #579 — repeatedIntervals: legacy / ARIS exports (Harry among them: 159 pairs) carry a duplicate as a
+// SECOND ROW for the same hole and interval under the real hole_id, with no sample-type column, so nothing marks
+// it as QC. With this on, the first regular row of an interval is the original and each later one with a
+// different result is its duplicate ("repeated interval", type not stated). A later row whose values are all
+// identical is a double import, not a re-assay (an RPD of 0 would flatter the precision): it is skipped and
+// counted in pairs.identicalRepeats.
+export function duplicatePairs(assays, symbol, elementUnits, patterns = DEFAULT_QAQC_PATTERNS, { minMean = 0, repeatedIntervals = false } = {}) {
+  const originals = new Map(), bySampleId = new Map(), repeats = [];
   assays.forEach((a) => {
     if (classifyQAQCRow(a, patterns) !== "regular") return;
-    originals.set(`${a.hole_id}|${a.from}|${a.to}`, a);
+    const k = `${a.hole_id}|${a.from}|${a.to}`;
+    if (!originals.has(k)) originals.set(k, a); // the FIRST row of an interval is its original (#579)
+    else if (repeatedIntervals) repeats.push(a);
     if (a.sample_id) bySampleId.set(String(a.sample_id), a);
   });
   const pairs = [];
+  let identicalRepeats = 0;
   assays.forEach((a) => {
     if (classifyQAQCRow(a, patterns) !== "duplicate") return;
     let orig = null, how = "";
@@ -197,6 +206,17 @@ export function duplicatePairs(assays, symbol, elementUnits, patterns = DEFAULT_
     const rpd = mean !== 0 ? (Math.abs(v1 - v2) / mean) * 100 : 0;
     pairs.push({ original_hole: orig.hole_id, duplicate_hole: a.hole_id, from: a.from, to: a.to, v1, v2, rpd, how, belowLimit: minMean > 0 && mean < minMean, kind: duplicateKind(a), sample_id: a.sample_id ?? null });
   });
+  repeats.forEach((a) => { // #579
+    const orig = originals.get(`${a.hole_id}|${a.from}|${a.to}`);
+    if (JSON.stringify(orig.values ?? null) === JSON.stringify(a.values ?? null)) { identicalRepeats++; return; }
+    const v1 = valueIn(orig, symbol, elementUnits[symbol] || "ppm", elementUnits);
+    const v2 = valueIn(a, symbol, elementUnits[symbol] || "ppm", elementUnits);
+    if (v1 == null || v2 == null) return;
+    const mean = (v1 + v2) / 2;
+    const rpd = mean !== 0 ? (Math.abs(v1 - v2) / mean) * 100 : 0;
+    pairs.push({ original_hole: orig.hole_id, duplicate_hole: a.hole_id, from: a.from, to: a.to, v1, v2, rpd, how: "repeated interval", belowLimit: minMean > 0 && mean < minMean, kind: duplicateKind(a), sample_id: a.sample_id ?? null });
+  });
+  pairs.identicalRepeats = identicalRepeats;
   return pairs;
 }
 

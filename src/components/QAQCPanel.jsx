@@ -28,6 +28,7 @@ export default function QAQCPanel({ assays, assayElements, onClose }) {
   const [selectedStdId, setSelectedStdId] = useState(null);
   const { crmCertificates = {}, setCrmCertificate, setAssayElements, project } = useStore() || {}; // #400
   const [dupMin, setDupMin] = useState(""); // #400 — ignore pairs whose mean is below this (~10x detection limit)
+  const [repeatedAsDup, setRepeatedAsDup] = useState(false); // #579 — same-interval second rows as duplicate pairs
   // TASKS.csv #534 — a detection limit PER ELEMENT, saved with the element list (assayElements[].detectionLimit, so the
   // project format does not change). The blank limit becomes a multiple of it (default 5x DL) and the duplicate pair
   // floor defaults to 10x DL; without a DL the old manual threshold applies. Units: the element's own.
@@ -54,7 +55,7 @@ export default function QAQCPanel({ assays, assayElements, onClose }) {
   const series = useMemo(() => (activeGroup ? standardSeries(ordered.rows, symbol, elementUnits, cert) : { points: [], limits: null }), [activeGroup, ordered, symbol, elementUnits, cert]);
 
   const blanks = useMemo(() => blankRows(assays, symbol, elementUnits, blankLimit), [assays, symbol, elementUnits, blankLimit]);
-  const dups = useMemo(() => duplicatePairs(assays, symbol, elementUnits, undefined, { minMean: pairFloor }), [assays, symbol, elementUnits, pairFloor]);
+  const dups = useMemo(() => duplicatePairs(assays, symbol, elementUnits, undefined, { minMean: pairFloor, repeatedIntervals: repeatedAsDup }), [assays, symbol, elementUnits, pairFloor, repeatedAsDup]);
   const dupSummary = useMemo(() => duplicateSummary(dups, DUP_RPD_LIMITS), [dups]); // #534 — per duplicate type
   const dupLimit = (d) => DUP_RPD_LIMITS[d.kind] ?? DUP_RPD_LIMITS.unknown;
 
@@ -185,7 +186,7 @@ export default function QAQCPanel({ assays, assayElements, onClose }) {
                   <thead><tr><th style={th}>Hole ID</th><th style={th}>From</th><th style={th}>To</th><th style={th}>{symbol}</th><th style={th}>Flag</th></tr></thead>
                   <tbody>
                     {blanks.map((b, i) => (
-                      <tr key={i} style={b.flagged ? { background: "var(--color-danger-bg)" } : undefined}>
+                      <tr key={i} style={b.flagged ? { background: "var(--color-danger-bg-soft)" } : undefined}>
                         <td style={td}>{b.hole_id}</td><td style={td}>{b.from}</td><td style={td}>{b.to}</td>
                         <td style={{ ...td, color: b.flagged ? "var(--color-danger-fg)" : "var(--color-text)" }}>{b.value.toFixed(4)}</td>
                         <td style={td}>{b.flagged ? "⚠ contaminated" : "ok"}</td>
@@ -197,6 +198,14 @@ export default function QAQCPanel({ assays, assayElements, onClose }) {
             </>
           )}
 
+          {/* TASKS.csv #579 */}
+          {tab === "duplicates" && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)" }}
+              title="Older and government (ARIS) exports often store a duplicate as a second row for the same hole and interval, with no sample-type column. Tick this to measure those as duplicate pairs: the first row is the original, a later row with a different result is the duplicate. Identical rows are double imports and are skipped.">
+              <input type="checkbox" checked={repeatedAsDup} onChange={(e) => setRepeatedAsDup(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Treat repeated same-interval rows as duplicate pairs (1st = original, 2nd = duplicate){repeatedAsDup ? ` — ${dups.filter((p) => p.how === "repeated interval").length} pair(s) found${dups.identicalRepeats ? `, ${dups.identicalRepeats} identical repeat(s) skipped as double imports` : ""}` : ""}</span>
+            </label>
+          )}
           {tab === "duplicates" && (
             dups.length === 0 ? (
               <div style={{ fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)", padding: 8 }}>No duplicate pairs found — a duplicate row (hole_id containing "dup") needs a matching original row at the exact same hole_id/from/to (see info).</div>
@@ -214,7 +223,7 @@ export default function QAQCPanel({ assays, assayElements, onClose }) {
                   <thead><tr><th style={th}>Original</th><th style={th}>Duplicate</th><th style={th}>Type</th><th style={th}>Interval</th><th style={th}>V1</th><th style={th}>V2</th><th style={th}>RPD %</th></tr></thead>
                   <tbody>
                     {dups.map((d, i) => (
-                      <tr key={i} style={d.belowLimit ? { opacity: 0.45 } : d.rpd > dupLimit(d) ? { background: "var(--color-danger-bg)" } : undefined} title={`paired by ${d.how}${d.belowLimit ? "; below the limit, not counted" : ""}`}>
+                      <tr key={i} style={d.belowLimit ? { opacity: 0.45 } : d.rpd > dupLimit(d) ? { background: "var(--color-danger-bg-soft)" } : undefined} title={`paired by ${d.how}${d.belowLimit ? "; below the limit, not counted" : ""}`}>
                         <td style={td}>{d.original_hole}</td><td style={td}>{d.duplicate_hole}</td><td style={td}>{DUP_KIND_LABELS[d.kind]} (≤{dupLimit(d)}%)</td>
                         <td style={td}>{d.from}–{d.to}</td>
                         <td style={td}>{d.v1.toFixed(4)}</td><td style={td}>{d.v2.toFixed(4)}</td>
