@@ -23,6 +23,7 @@ import { errorNotice } from "../../lib/notices.js";
 import { searchEllipsoidBasis, filterBySearchSupport, anisoScales, anisoWarpPoint, invScales, anisoWarpDirection, medianCollarSpacing, autoHaloParams, splitIntervalForSampling, spatialClusters, sampleTerrainElevation } from "../../lib/viewer/geomath.js";
 import { intervalEndIndex, intervalStartIndex, upperContactOf, mergeTouchingIntervals } from "../../lib/viewer/intervals.js";
 import { codedRuns, topsForCode, codeInfo, withPileOrder, effectiveCode } from "../../lib/modellingCodes.js"; // TASKS.csv #599
+import { clipMesh } from "../../lib/clipMesh.js"; // TASKS.csv #568
 import { findOnTraceWorld, findOnTrace, interceptId, SOFT_NUGGET, MODEL_EXTENT_PAD_M, guessSurfaceType, pointInDomain } from "../../lib/viewer/modelHelpers.js";
 
 export function useModelling(ctx) {
@@ -268,36 +269,35 @@ export function useModelling(ctx) {
         surf = { ...surf, vertices: clean.vertices, faces: clean.faces };
       }
       const apiVerts = unwarpVerts(surf.vertices);
-      const sceneVerts = apiVerts.map(apiToScene);
-      // TASKS.csv #88 — boundary constraint: drop any triangle with a vertex outside the selected
-      // domain, since GemPy fit/extrapolated across the whole extent regardless of which control points
-      // fed it (#89 only restricted the INPUT, not the output). Leaves the vertex buffer itself alone
-      // (unused vertices just go unreferenced) — simpler than compacting, and three.js doesn't care.
+      let sceneVerts = apiVerts.map(apiToScene);
+      // TASKS.csv #88 — boundary constraint: GemPy fit / extrapolated across the whole extent regardless of which
+      // control points fed it (#89 only restricted the INPUT, not the output), so the surface is clipped to the domain.
+      // TASKS.csv #568 — CUT at the boundary (lib/clipMesh.js), not by dropping every triangle with a vertex outside:
+      // that left a stair-stepped edge at the model's cell size that never met the fault.
       let faces = surf.faces;
       if (clipDomain) {
-        const vertexIn = sceneVerts.map((v) => pointInDomain(v, clipDomain, implicitMeshesRef.current));
-        faces = faces.filter((f) => f.every((idx) => vertexIn[idx]));
+        const c = clipMesh(sceneVerts, faces, (v) => !pointInDomain(v, clipDomain, implicitMeshesRef.current));
+        sceneVerts = c.verts; faces = c.faces;
         if (!faces.length) { missing.push(`${spec.label} (entirely clipped by domain "${clipDomain.name}")`); return; }
       }
       // TASKS.csv #358 — the model extent's top is the highest control point plus padding, and GemPy
       // extrapolates up to it, so dipping contacts used to stand up into the air above the ground (in 3D,
-      // in exports, in any volume). Drop every triangle whose centroid is above the terrain surface (only
-      // inside the terrain's footprint; outside it there is nothing to clip against).
+      // in exports, in any volume). The part above the terrain surface is removed (only inside the terrain's
+      // footprint; outside it there is nothing to clip against). #568 — cut at the ground line (was: every
+      // triangle whose centroid was above it dropped, leaving a saw-tooth that stopped short of the surface).
       let topoClipped = 0;
       if (clipTerrain) {
         const o = originRef.current;
         const [txmin, tymin, txmax, tymax] = clipTerrain.bbox;
-        const before = faces.length;
-        faces = faces.filter((f) => {
-          const cx = (sceneVerts[f[0]].x + sceneVerts[f[1]].x + sceneVerts[f[2]].x) / 3;
-          const cy = (sceneVerts[f[0]].y + sceneVerts[f[1]].y + sceneVerts[f[2]].y) / 3;
-          const cz = (sceneVerts[f[0]].z + sceneVerts[f[1]].z + sceneVerts[f[2]].z) / 3;
-          const wx = cx + o.x, wy = -cz + o.y;
-          if (wx < txmin || wx > txmax || wy < tymin || wy > tymax) return true;
+        const above = (v) => {
+          const wx = v.x + o.x, wy = -v.z + o.y;
+          if (wx < txmin || wx > txmax || wy < tymin || wy > tymax) return false;
           const ground = sampleTerrainElevation(clipTerrain, wx, wy);
-          return !Number.isFinite(ground) || cy + o.z <= ground;
-        });
-        topoClipped = before - faces.length;
+          return Number.isFinite(ground) && v.y + o.z > ground;
+        };
+        const c = clipMesh(sceneVerts, faces, above);
+        sceneVerts = c.verts; faces = c.faces;
+        topoClipped = c.removed + c.split;
         if (!faces.length) { missing.push(`${spec.label} (lies entirely above the terrain surface)`); return; }
       }
       const geo = new THREE.BufferGeometry();
