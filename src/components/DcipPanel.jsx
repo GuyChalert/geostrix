@@ -178,6 +178,7 @@ export default function DcipPanel({ pBtn, numInput }) {
     const request = {
       readings: readingsH, rho: parsed.rho, ...(parsed.ip ? { chargeability: parsed.ip } : {}), topo, // #539 — horizontal positions
       mesh: { cell: num(opts.cell), depth: num(opts.depth) }, maxIter: Number(opts.maxIter) || 20,
+      geometricFactor: opts.geomFactor || "flat", // TASKS.csv #580
       uncertainty: { percent: num(opts.pct) || 0, floor: num(opts.floor) || 0 },
       ...(parsed.ip ? { ipUncertainty: { percent: num(opts.ipPct) || 0, floor: num(opts.ipFloor) || 0 } } : {}),
     };
@@ -191,6 +192,7 @@ export default function DcipPanel({ pBtn, numInput }) {
       positions: line.positions === "slope" ? "chained along the ground (slope), converted to horizontal" : "horizontal distances", // #539
       ...(lineGeom.scale !== 1 ? { chainingScale: lineGeom.scale } : {}), ...(line.stations ? { stations: `${line.stations.list.length} from ${line.stations.file} (line ${line.stations.line})` } : {}),
       mesh: { cellM: num(opts.cell), depthM: num(opts.depth), verticalCellM: num(opts.cell) / 2 },
+      geometricFactor: (opts.geomFactor || "flat") === "flat" ? "flat ground (the file's apparent resistivities use nominal electrode spacings)" : "electrodes on the topography (the file's apparent resistivities are already topography-corrected)", // #580
       uncertainty: { resistivityPercent: num(opts.pct) || 0, resistivityFloor: num(opts.floor) || 0, ...(parsed.ip ? { chargeabilityPercent: num(opts.ipPct) || 0, chargeabilityFloorMvV: num(opts.ipFloor) || 0 } : {}), source: "entered by user" },
       crs: `EPSG:${project?.epsg}`, interpretation: "One smooth model that fits the data to the stated uncertainty (2.5D: the ground is assumed not to change along strike, across the line). Deep and edge cells are poorly constrained — see the support.",
     };
@@ -287,6 +289,14 @@ export default function DcipPanel({ pBtn, numInput }) {
           <div style={row} title="Horizontal cell size; half the smallest electrode spacing is a good start (vertical cells are half this)."><span style={lbl}>Cell / depth (m)</span><input type="number" value={opts.cell} onChange={(e) => setOpts((o) => ({ ...o, cell: e.target.value }))} style={inp} aria-label="Cell size" /><input type="number" value={opts.depth} onChange={(e) => setOpts((o) => ({ ...o, depth: e.target.value }))} style={inp} aria-label="Model depth" /></div>
           <div style={row} title="How far you trust each reading. No default: too small and the model invents detail, too large and it smooths real bodies away."><span style={lbl}>Resistivity ± %, floor</span><input type="number" value={opts.pct} onChange={(e) => setOpts((o) => ({ ...o, pct: e.target.value }))} style={inp} aria-label="Resistivity uncertainty percent" /><input type="number" value={opts.floor} onChange={(e) => setOpts((o) => ({ ...o, floor: e.target.value }))} style={inp} aria-label="Resistivity uncertainty floor" /></div>
           {parsed?.ip && <div style={row}><span style={lbl}>Chargeability ± %, floor mV/V</span><input type="number" value={opts.ipPct} onChange={(e) => setOpts((o) => ({ ...o, ipPct: e.target.value }))} style={inp} aria-label="Chargeability uncertainty percent" /><input type="number" value={opts.ipFloor} onChange={(e) => setOpts((o) => ({ ...o, ipFloor: e.target.value }))} style={inp} aria-label="Chargeability uncertainty floor" /></div>}
+          {/* TASKS.csv #580 — which geometric factor the file's apparent resistivities were computed with */}
+          <div style={row} title="Receivers and contractors compute apparent resistivity with the geometric factor of the nominal electrode spacings on flat ground; GeoStrix models the real ground (electrodes on the topography) and turns its predicted volts into apparent resistivity the SAME way as the file. On a rugged line the two factors differ by tens of percent per reading, which would otherwise be inverted as false near-surface structure. Choose the second only if the file was already corrected for topography.">
+            <span style={lbl}>Apparent resistivity computed for</span>
+            <select value={opts.geomFactor || "flat"} onChange={(e) => setOpts((o) => ({ ...o, geomFactor: e.target.value }))} style={{ ...numInput, flex: 1, minWidth: 0 }} aria-label="Geometric factor the apparent resistivities were computed with">
+              <option value="flat">flat ground, nominal spacings (usual)</option>
+              <option value="draped">the electrodes on the topography</option>
+            </select>
+          </div>
           <div style={row} title="Cells whose normalised sensitivity is below this are greyed in the section and hidden in 3D: the data barely see them."><span style={lbl}>Hide cells below support</span><input type="number" step={0.005} min={0} max={1} value={opts.supportCutoff} onChange={(e) => setOpts((o) => ({ ...o, supportCutoff: e.target.value }))} style={inp} aria-label="Support cutoff" /></div>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             <button onClick={run} disabled={running} style={{ ...pBtn, flex: 1, opacity: running ? 0.5 : 1 }}><Play size={13} /> Invert</button>

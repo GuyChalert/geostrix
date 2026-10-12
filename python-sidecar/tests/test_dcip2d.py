@@ -146,9 +146,43 @@ def test_ip_zero_reading_needs_a_floor():
         print("  run_job:", e)
 
 
+def test_flat_geometric_factor_on_a_ridge():
+    """TASKS.csv #580 — uniform 100 ohm.m under a 60 m ridge (flanks to ~40 %), apparent resistivity written the way
+    a receiver / contractor does: V over the geometric factor of the nominal FLAT spacings. Inverted with the
+    draped factor this came back 76-127 ohm.m in the shallow supported cells (the factor difference fitted as
+    structure); with the default flat factor it must stay within 85-115, and the run records the choice."""
+    from discretize.utils import active_from_xyz
+    from simpeg import maps
+    from simpeg.electromagnetics.static import resistivity as dc
+    from simpeg.electromagnetics.static.utils import static_utils
+    x = np.arange(48) * 10.0
+    rows = np.array([[x[i], x[i] + 20, x[i] + 20 + n * 20, x[i] + 40 + n * 20] for i in range(48) for n in range(1, 7) if x[i] + 40 + n * 20 <= x[-1]])
+    tx_ = np.linspace(-500, 1000, 301)
+    topo = np.c_[tx_, 1000 + 60 * np.exp(-((tx_ - 235) / 70.0) ** 2)]
+    pos = np.unique(rows.ravel())
+    idx = np.searchsorted(pos, rows)
+    mesh, _ = D._mesh(pos, topo, 5.0, 120.0)
+    tx = np.linspace(mesh.nodes_x[0], mesh.nodes_x[-1], 800)
+    active = active_from_xyz(mesh, np.c_[tx, np.interp(tx, topo[:, 0], topo[:, 1])])
+    survey = D._survey(idx, np.c_[pos, np.interp(pos, topo[:, 0], topo[:, 1])], "apparent_resistivity")
+    survey.drape_electrodes_on_topography(mesh, active, topo_cell_cutoff="top", shift_horizontal=False)
+    g_draped = survey.set_geometric_factor()
+    volts = dc.Simulation2DNodal(mesh, survey=survey, sigmaMap=maps.InjectActiveCells(mesh, active, 1e-8)).dpred(np.full(int(active.sum()), 0.01)) * g_draped
+    rho = volts / static_utils.geometric_factor(D._survey(idx, np.c_[pos, np.zeros_like(pos)], "apparent_resistivity"))
+    out = D.run_job({"readings": rows.tolist(), "rho": rho.tolist(), "topo": topo.tolist(), "mesh": {"cell": 5.0, "depth": 120.0},
+                     "uncertainty": {"percent": 3}, "maxIter": 12}, lambda e: None)
+    c = out["cells"]
+    s, z, res, sup = (np.asarray(c[k]) for k in ("s", "z", "resistivity", "support"))
+    shallow = (sup > 0.05) & (np.interp(s, topo[:, 0], topo[:, 1]) - z < 25)
+    p5, p95 = np.percentile(res[shallow], [5, 95])
+    print(f"flat geometric factor on a ridge: shallow supported cells {p5:.1f}-{p95:.1f} ohm.m (true 100), recorded {out['geometricFactor']}")
+    assert out["geometricFactor"] == "flat" and out["reachedTarget"] and 85 < p5 and p95 < 115
+
+
 if __name__ == "__main__":
     test_ip_zero_reading_needs_a_floor()
     test_pole_dipole_homogeneous()
     test_dcip2d_recovers_block()
     test_support_not_biased_against_conductors()
+    test_flat_geometric_factor_on_a_ridge()
     print("ALL PASSED")

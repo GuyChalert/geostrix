@@ -297,6 +297,8 @@ def _validate_dcip2d(req):
         if not floor_ok and any((c is None) or (not isinstance(c, (int, float))) or c == 0 for c in req["chargeability"]):
             raise HTTPException(400, "some chargeability readings are 0 mV/V: a percent alone gives them no uncertainty — add a floor in mV/V.")
     req["maxIter"] = int(min(40, max(1, int(req.get("maxIter", 20)))))
+    if req.get("geometricFactor") not in (None, "flat", "draped"):  # TASKS.csv #580
+        raise HTTPException(400, 'geometricFactor must be "flat" (the data used nominal flat-ground spacings) or "draped".')
 
 
 @app.post("/v1/geophys/plan")

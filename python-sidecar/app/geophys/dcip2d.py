@@ -92,7 +92,21 @@ def run_job(req, progress):
     # cells) and short-offset readings came out up to 140 % wrong on uniform ground; unshifted <= 2 %.
     survey = _survey(idx, locs, "apparent_resistivity")
     survey.drape_electrodes_on_topography(mesh, active, topo_cell_cutoff="top", shift_horizontal=False)
+    # TASKS.csv #580 — WHICH geometric factor turns the predicted volts into apparent resistivity must be the one the
+    # data were computed with. A receiver / contractor computes rho_a with K from the nominal electrode spacings on
+    # FLAT ground; SimPEG's set_geometric_factor() uses the electrodes draped on the topography. On a rugged line
+    # the two differ per reading (0.80-1.65x over a 60 m ridge) and that difference was fitted as near-surface
+    # structure (uniform 100 ohm.m came back 76-127). Default "flat": predict rho_a = V / G_flat, like the file.
+    # "draped": the data were already computed with the true 3D electrode positions (a topography-corrected file).
+    gf_mode = req.get("geometricFactor") or "flat"
     survey.set_geometric_factor()
+    if gf_mode == "flat":
+        from simpeg.electromagnetics.static.utils import static_utils
+        g_flat = static_utils.geometric_factor(_survey(idx, np.c_[pos, np.zeros_like(pos)], "apparent_resistivity"))
+        slices = survey.get_all_slices()
+        for src in survey.source_list:
+            for rx in src.receiver_list:
+                rx._geometric_factor[src] = g_flat[slices[src, rx]]
 
     unc = req["uncertainty"]
     std = float(unc["percent"]) / 100.0 * np.abs(rho) + float(unc.get("floor", 0))
@@ -202,6 +216,7 @@ def run_job(req, progress):
         "reachedTarget": phi_d <= 1.05 * len(rho), "history": hist_dc, "iterations": len(hist_dc), "fitChoice": fit_dc,
         "ip": ({k: v for k, v in out_ip.items() if k != "model"} if out_ip else None),
         "mesh": {"shape": list(mesh.shape_cells), "cell": cell, "depth": depth, "nActive": n_act, "nCore": int(keep_full.sum())},
+        "geometricFactor": gf_mode,  # #580 — recorded with the result
         "seconds": time.time() - t0,
     }
     import simpeg, discretize

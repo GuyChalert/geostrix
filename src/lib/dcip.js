@@ -142,7 +142,7 @@ export function slimDcipResult(result) {
   const c = result.cells;
   const cells = { s: c.s, z: c.z, ds: c.ds, dz: c.dz, resistivity: c.resistivity, support: c.support, ...(c.chargeability ? { chargeability: c.chargeability } : {}) };
   return { kind: "dcip2d", cells, electrodes: result.electrodes, phi_d: result.phi_d, target: result.target, reachedTarget: result.reachedTarget,
-    iterations: result.iterations, ip: result.ip ? Object.fromEntries(Object.entries({ phi_d: result.ip.phi_d, reachedTarget: result.ip.reachedTarget, iterations: result.ip.iterations, fitChoice: result.ip.fitChoice }).filter(([, v]) => v !== undefined)) : null, mesh: result.mesh, versions: result.versions }; // ip fields: #581
+    iterations: result.iterations, ip: result.ip ? Object.fromEntries(Object.entries({ phi_d: result.ip.phi_d, reachedTarget: result.ip.reachedTarget, iterations: result.ip.iterations, fitChoice: result.ip.fitChoice }).filter(([, v]) => v !== undefined)) : null, mesh: result.mesh, versions: result.versions, ...(result.geometricFactor ? { geometricFactor: result.geometricFactor } : {}) }; // ip fields: #581; geometricFactor: #580
 }
 
 // A saved line back into the panel's import shape: one row per reading under fixed headers, so the normal
