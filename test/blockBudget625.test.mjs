@@ -24,3 +24,13 @@ test("#625 the estimator honours maxBlocks (default 200,000; never above 5 M)", 
   assert.equal(g.nx * g.ny * g.nz, 216000);
   assert.throws(() => estimateDenseGrid(pts, { bounds: b, cellSize: { dx: 1.5, dy: 1.5, dz: 1.5 }, searchRadius: 10, maxBlocks: 1e9 }), /5,000,000-block limit/);
 });
+
+import { estimateBlockModel } from "../src/lib/estimation.js";
+test("#626 the block-model estimate honours maxBlocks too", () => {
+  const pts = [{ x: 50, y: 50, z: 50, value: 1, hole_id: "A" }];
+  const b = { xmin: 0, xmax: 300, ymin: 0, ymax: 300, zmin: 0, zmax: 300 };
+  assert.throws(() => estimateBlockModel(pts, { bounds: b, cellSize: { dx: 5, dy: 5, dz: 5 }, searchRadius: 10 }), /200,000-block limit/);
+  const r = estimateBlockModel(pts, { bounds: b, cellSize: { dx: 5, dy: 5, dz: 5 }, searchRadius: 10, maxBlocks: 1000000 });
+  assert.equal(r.grid.nx * r.grid.ny * r.grid.nz, 216000);
+  assert.ok(r.blocksEstimated > 0);
+});

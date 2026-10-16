@@ -95,7 +95,7 @@ export function samplePointsFromAssays(assays, symbol, unit, elementUnits, colla
 // value) — an empty region of the grid should read as "not estimated", not "estimated at zero grade".
 export function estimateBlockModel(samplePoints, opts) {
   const { bounds, cellSize, method = "idw2", searchRadius = null, minSamples = 1, maxSamples = 16, minHoles = 1, lengthWeight = true, restrictToDomain = false } = opts;
-  const { dx, dy, dz, nx, ny, nz, totalBlocks } = gridDims(bounds, cellSize);
+  const { dx, dy, dz, nx, ny, nz, totalBlocks } = gridDims(bounds, cellSize, opts.maxBlocks); // maxBlocks: #626
   if (!samplePoints.length) return { cells: [], blocksEstimated: 0, blocksSkipped: totalBlocks, singleHoleCells: 0 };
 
   const estOpts = { method, searchRadius, minSamples, maxSamples, minHoles, lengthWeight, restrictToDomain };
