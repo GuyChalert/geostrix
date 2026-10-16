@@ -29,7 +29,7 @@ import { DEFAULT_DESURVEY_METHOD, normalizeDesurveyMethod } from "./desurvey.js"
 // v8 (TASKS.csv #599) adds modellingCodes (per-interval modelling codes, the code list, correlation ties).
 // v9 (TASKS.csv #503) adds alterationBoxes (the user's least-altered box limits + litho code -> protolith map).
 // v10 (TASKS.csv #555) stores assays and interval layers of 2,000+ rows as exact columns (compactTable.js).
-export const PROJECT_VERSION = 10; // #555: assays and big interval layers may be stored as exact columns ({ __compactTable })
+export const PROJECT_VERSION = 11; // #630: sectionImages. Was 10 // #555: assays and big interval layers may be stored as exact columns ({ __compactTable })
 
 export const EMPTY_LAYERS = { litho: [], alt: [], vein: [], geotech: [], mnlgy: [], magsusc: [], structure: [], litho_gc: [], alt_gc: [], geophys_pts: [] };
 
@@ -116,6 +116,7 @@ export const FIELDS = [
   { key: "rasters", track: "dirty", empty: list },
   { key: "boundaries", track: "undo", empty: list },
   { key: "mapLayers", track: "dirty", empty: list }, // TASKS.csv #316
+  { key: "sectionImages", track: "dirty", empty: list }, // TASKS.csv #630 — georeferenced vertical (cross-section) images
   { key: "surfaceStructures", track: "dirty", empty: list }, // TASKS.csv #317
   { key: "fieldStructuralRefs", track: "dirty", empty: list },
   { key: "lithoGroups", track: "dirty", empty: list }, // TASKS.csv #176 — a grouping belongs to the project it was built for

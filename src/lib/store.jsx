@@ -792,6 +792,18 @@ export function StoreProvider({ children }) {
     setModuleRequestSeq((s) => s + 1);
   }, []);
 
+  // TASKS.csv #630 — georeferenced vertical images (scanned / exported cross-sections) standing in the 3D view. Each:
+  // { id, name, dataUrl (JPEG/PNG, longest side <= 4096 px), width, height, corners: [[x,y,z] TL, TR, BR, BL] in the
+  // project CRS, line: { a: {x,y}, b: {x,y} }, opacity, visible, rmse }. Saved like map layers, not in Undo (images).
+  const [sectionImages, setSectionImages] = useState([]);
+  const addSectionImage = useCallback((img) => {
+    const id = `secimg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setSectionImages((p) => [...p, { opacity: 1, visible: true, ...img, id }]);
+    return id;
+  }, []);
+  const updateSectionImage = useCallback((id, patch) => setSectionImages((p) => p.map((l) => l.id === id ? { ...l, ...(typeof patch === "function" ? patch(l) : patch) } : l)), []);
+  const removeSectionImage = useCallback((id) => setSectionImages((p) => p.filter((l) => l.id !== id)), []);
+
   // Global task progress (status-bar "what's happening right now" indicator) moved to its own
   // TaskProgressProvider/useTaskProgressValue/useSetTaskProgress pair above (TASKS.csv #226 follow-up)
   // — see that context's own comment for why it's split out of this giant one.
@@ -803,7 +815,7 @@ export function StoreProvider({ children }) {
     project: [project, setProject], collars: [collars, setCollars], survey: [survey, setSurvey], layers: [layers, setLayers],
     assays: [assays, setAssays], assayElements: [assayElements, setAssayElements], customLayers: [customLayers, setCustomLayers],
     viewerUiState: [viewerUiState, setViewerUiState], themes: [themes, setThemes], rasters: [rasters, setRasters],
-    boundaries: [boundaries, setBoundaries], mapLayers: [mapLayers, setMapLayers], surfaceStructures: [surfaceStructures, setSurfaceStructures],
+    boundaries: [boundaries, setBoundaries], mapLayers: [mapLayers, setMapLayers], sectionImages: [sectionImages, setSectionImages], surfaceStructures: [surfaceStructures, setSurfaceStructures],
     fieldStructuralRefs: [fieldStructuralRefs, setFieldStructuralRefs], lithoGroups: [lithoGroups, setLithoGroups],
     geophysSurveys: [geophysSurveys, setGeophysSurveys], crmCertificates: [crmCertificates, setCrmCertificates],
     dcipLines: [dcipLines, setDcipLines], modellingCodes: [modellingCodes, setModellingCodes], alterationBoxes: [alterationBoxes, setAlterationBoxes],
@@ -1477,6 +1489,7 @@ Open it anyway? (Update GeoStrix to keep everything.)`)) return { ok: false, can
     rasters, addRaster, updateRaster, removeRaster,
     boundaries, addBoundary, updateBoundary, removeBoundary,
     mapLayers, addMapLayer, updateMapLayer, removeMapLayer, // TASKS.csv #316
+    sectionImages, addSectionImage, updateSectionImage, removeSectionImage, // TASKS.csv #630
     surfaceStructures, addSurfaceStructureSet, updateSurfaceStructureSet, removeSurfaceStructureSet, // TASKS.csv #317
     fieldStructuralRefs, addFieldRef, removeFieldRef,
     lithoGroups, addLithoGroup, updateLithoGroup, removeLithoGroup,

@@ -121,6 +121,13 @@ export function reprojectProject(live, fromEpsg, toEpsg, opts = {}) {
     });
     count("map layers", f.mapLayers.length);
   }
+  if (live.sectionImages?.length) { // TASKS.csv #630 — corners and the section line move; elevations don't
+    f.sectionImages = live.sectionImages.map((im) => {
+      const [ax, ay] = xy(im.line?.a?.x, im.line?.a?.y), [bx, by] = xy(im.line?.b?.x, im.line?.b?.y);
+      return { ...im, corners: (im.corners || []).map(([x, y, z]) => [...xy(x, y), z]), ...(im.line ? { line: { a: { x: ax, y: ay }, b: { x: bx, y: by } } } : {}) };
+    });
+    count("section images", f.sectionImages.length);
+  }
   if (live.omfObjects?.length) {
     f.omfObjects = live.omfObjects.map((o) => {
       const org = o.origin || [0, 0, 0];

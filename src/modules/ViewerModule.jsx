@@ -56,6 +56,7 @@ const DataQCModal = lazyModal(() => import("../components/DataQCModal.jsx"));  /
 // regardless of whether SQL workspace is ever opened. React.lazy defers the whole chain until the
 // modal is actually rendered (see the Suspense wrapper at its render site below).
 const SQLWorkspaceModal = React.lazy(() => import("../components/SQLWorkspaceModal.jsx"));
+const SectionGeorefModal = React.lazy(() => import("../components/SectionGeorefModal.jsx")); // TASKS.csv #630
 const BoundaryInterceptsModal = lazyModal(() => import("../components/BoundaryInterceptsModal.jsx"));  // TASKS.csv #301
 const StripLog = lazyModal(() => import("../components/StripLog.jsx"));  // TASKS.csv #301
 const StereonetModal = lazyModal(() => import("../components/StereonetModal.jsx"));  // TASKS.csv #301
@@ -663,6 +664,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     boundaries, addBoundary, updateBoundary, removeBoundary,
     mapLayers, surfaceStructures, // TASKS.csv #316/#317
     updateMapLayer, removeMapLayer, // TASKS.csv #628 — the Map layers list in this sidebar
+    sectionImages, addSectionImage, updateSectionImage, removeSectionImage, // TASKS.csv #630
     fieldStructuralRefs, addFieldRef, removeFieldRef,
     lithoGroups, addLithoGroup, updateLithoGroup, removeLithoGroup,
     modellingCodes, setModellingCodes, // TASKS.csv #599
@@ -879,6 +881,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   const [importModal, setImportModal] = useState(null);
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const [qcModalOpen, setQcModalOpen] = useState(false); // TASKS.csv #82 — data QA/QC modal
+  const [sectionGeorefOpen, setSectionGeorefOpen] = useState(false); // TASKS.csv #630
   // TASKS.csv #239 — SQL workspace (#50) was only reachable from the Geochem module's toolbar despite
   // querying collars/survey/layers/boundaries too, not just assays — discoverability gap flagged by the
   // QGIS-specialist audit. Same modal, same store data, just also reachable from here.
@@ -1067,6 +1070,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     (omfObjects || []).map((o) => [o.id, (o.vertices || []).length, o.origin || null]),
   ]), [terrain?.bbox, terrainElevRange, rasters, boundaries, omfObjects]);
   const mapLayerGroupRef = useRef(null);
+  const sectionImageGroupRef = useRef(null), sectionImageMeshesRef = useRef({}); // TASKS.csv #630
   const mapLayerMeshesRef = useRef({}); // id -> THREE.Mesh (one textured drape per layer)
   const surfStructGroupRef = useRef(null);
   const surfStructObjsRef = useRef({}); // id -> THREE.Group (InstancedMesh discs + dip ticks)
@@ -2010,6 +2014,9 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     const mapLayerGroup = new THREE.Group(); mapLayerGroup.name = "mapLayers"; root.add(mapLayerGroup); // TASKS.csv #316
     mapLayerGroupRef.current = mapLayerGroup;
     mapLayerMeshesRef.current = {};
+    const sectionImageGroup = new THREE.Group(); sectionImageGroup.name = "sectionImages"; root.add(sectionImageGroup); // TASKS.csv #630
+    sectionImageGroupRef.current = sectionImageGroup;
+    sectionImageMeshesRef.current = {};
     const surfStructGroup = new THREE.Group(); surfStructGroup.name = "surfaceStructures"; root.add(surfStructGroup); // TASKS.csv #317
     surfStructGroupRef.current = surfStructGroup;
     surfStructObjsRef.current = {};
@@ -5091,6 +5098,48 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     });
   }, [mapLayers, collars, terrain, rebuildSeq]);
 
+  // ---------- georeferenced section images (TASKS.csv #630) ----------
+  // One textured quad per image through its four world corners (sectionGeoref.js: an affine maps the image to a
+  // parallelogram, so plain UVs on two triangles reproduce it exactly). Double-sided, so it reads from either side
+  // of the section. Rebuilt only when the corners, the image or the scene origin change; opacity / visibility are
+  // applied in place.
+  useEffect(() => {
+    const group = sectionImageGroupRef.current;
+    if (!group) return;
+    const { x: ox, y: oy, z: oz } = originRef.current;
+    const meshes = sectionImageMeshesRef.current;
+    const dispose = (m) => { group.remove(m); m.geometry?.dispose?.(); m.material?.map?.dispose?.(); m.material?.dispose?.(); };
+    const wanted = new Set((sectionImages || []).map((im) => im.id));
+    Object.keys(meshes).forEach((id) => { if (!wanted.has(id)) { dispose(meshes[id]); delete meshes[id]; } });
+    (sectionImages || []).forEach((im) => {
+      if (!im.corners || im.corners.length !== 4 || !im.dataUrl) return;
+      const geoKey = `${ox},${oy},${oz}|${im.corners.flat().join(",")}|${im.dataUrl.length}`;
+      let mesh = meshes[im.id];
+      if (mesh && mesh.userData.geoKey !== geoKey) { dispose(mesh); mesh = null; delete meshes[im.id]; }
+      if (!mesh) {
+        const pos = new Float32Array(im.corners.flatMap(([x, y, z]) => [x - ox, z - oz, -(y - oy)]));
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), 2)); // TL, TR, BR, BL
+        geometry.setIndex([0, 3, 1, 1, 3, 2]);
+        geometry.computeBoundingSphere();
+        const texture = new THREE.TextureLoader().load(im.dataUrl, () => { lastActivityRef.current = Date.now(); });
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = rendererRef.current?.capabilities?.getMaxAnisotropy?.() ?? 1;
+        const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, transparent: true, opacity: im.opacity ?? 1 });
+        mesh = new THREE.Mesh(geometry, material);
+        mesh.userData = { geoKey };
+        group.add(mesh);
+        meshes[im.id] = mesh;
+      }
+      mesh.material.opacity = im.opacity ?? 1;
+      mesh.material.transparent = (im.opacity ?? 1) < 1;
+      mesh.material.depthWrite = (im.opacity ?? 1) >= 1;
+      mesh.material.needsUpdate = true;
+      mesh.visible = im.visible !== false;
+    });
+  }, [sectionImages, collars, rebuildSeq]);
+
   // ---------- rebuild surface structure symbols (TASKS.csv #317) ----------
   // One InstancedMesh of thin discs per imported file (a disc lying in the measured plane, i.e. its axis
   // along the pole) plus one LineSegments of down-dip ticks from each disc's centre — two draw calls per
@@ -6962,6 +7011,24 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         <input ref={setInputRef("mapLayer")} type="file" multiple accept=".zip,.gpkg,.shp,.dbf,.prj,.cpg,.shx" style={{ display: "none" }} onChange={(e) => { groupShapefileParts(Array.from(e.target.files)).files.forEach((f) => openImportModal(f)); e.target.value = ""; }} />
         {mapLayers.length > 0 && <div style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", margin: "2px 2px 0" }}>Colours, labels and draping: Geophysics → Map layers.</div>}
 
+        {/* TASKS.csv #630 — georeferenced cross-section images standing in the 3D view */}
+        <div className="ge-section-label" style={{ marginTop: 16 }}>Section images{sectionImages.length ? ` (${sectionImages.length})` : ""}</div>
+        {sectionImages.map((im) => (
+          <div key={im.id} style={{ padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateSectionImage(im.id, { visible: im.visible === false })} title={`${im.visible === false ? "Show" : "Hide"} "${im.name}"${im.rmse != null ? ` (fit error ${im.rmse.toFixed(1)} m)` : ""}`} style={{ cursor: "pointer", flex: 1, fontSize: "var(--font-size-base)", color: im.visible === false ? "var(--color-text-disabled)" : "var(--color-text)", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                {im.visible === false ? <EyeOff size={14} /> : <Eye size={14} />} <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{im.name}</span>
+              </div>
+              <Maximize2 size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} {...iconAction(() => { const m = sectionImageMeshesRef.current[im.id]; if (m) fitBox(new THREE.Box3().setFromObject(m)); }, `Zoom to section image "${im.name}"`)} />
+              <Trash2 size={14} style={{ cursor: "pointer", color: "var(--color-danger-icon)", flexShrink: 0 }} {...iconAction(() => { if (confirmDestructive(`Remove the section image "${im.name}" from the project?`)) removeSectionImage(im.id); }, `Remove section image "${im.name}"`)} />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", marginTop: 4 }}>
+              Opacity <input type="range" min={0.1} max={1} step={0.05} value={im.opacity ?? 1} onChange={(e) => updateSectionImage(im.id, { opacity: Number(e.target.value) })} style={{ flex: 1 }} aria-label={`Opacity of "${im.name}"`} />
+            </label>
+          </div>
+        ))}
+        <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => setSectionGeorefOpen(true)} style={{ cursor: "pointer", padding: "8px 10px", background: "var(--color-bg-subtle)", border: "1px dashed var(--color-border-light)", borderRadius: 6, fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)", textAlign: "center" }}>+ Georeference a section image…</div>
+
         {/* TASKS.csv #155 — Snapshot to Layout / Draw cross-section (+ its buffer setting) moved to
             the toolbar above (Camera / Scissors icons) — same reasoning as Grid/Themes above. The
             saved-sections list right below stays here: it's project DATA (like a layer), not a tool. */}
@@ -8682,6 +8749,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         );
       })()}
       {qcModalOpen && <DataQCModal onCancel={() => setQcModalOpen(false)} />}
+      {sectionGeorefOpen && (
+        <Suspense fallback={null}>
+          <SectionGeorefModal sections={sections} onClose={() => setSectionGeorefOpen(false)}
+            onImport={(img) => { addSectionImage(img); setSectionGeorefOpen(false); setNotices((p) => [...p, `${img.name}: placed in 3D on its section line${img.rmse != null ? ` (fit error ${img.rmse.toFixed(1)} m)` : ""} — listed under Section images.`]); }} />
+        </Suspense>
+      )}
       {sqlModalOpen && (
         <Suspense fallback={null}>
           <SQLWorkspaceModal
