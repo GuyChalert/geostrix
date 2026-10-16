@@ -1461,6 +1461,7 @@ Open it anyway? (Update GeoStrix to keep everything.)`)) return { ok: false, can
     surfaceElements, setSurfaceElements,
     customLayers, setCustomLayers,
     dbConnections, setDbConnections,
+    getProjectPayload: snapshotCurrentPayload, // TASKS.csv #598 — the project, as Save would write it, for an opt-in problem report
     liveDbConnections, connectDb, disconnectDb,
     excludedIntercepts, setExcludedIntercepts, toggleExcludedIntercept,
     softIntercepts, setSoftIntercepts, toggleSoftIntercept,

@@ -22,6 +22,12 @@ contextBridge.exposeInMainWorld("desktop", {
   onUpdaterEvent: (cb) => { const h = (_e, d) => cb(d); ipcRenderer.on("updater-event", h); return () => ipcRenderer.removeListener("updater-event", h); },
   dbConnect: (config) => ipcRenderer.invoke("db-connect", config),
   refocusAfterDialog: () => ipcRenderer.send("refocus-after-dialog"), // TASKS.csv #622
+  // TASKS.csv #598 — Help > Report a problem
+  problemReportInfo: () => ipcRenderer.invoke("problem-report-info"),
+  captureWindow: () => ipcRenderer.invoke("capture-window"),
+  saveProblemReport: (bytes, name) => ipcRenderer.invoke("save-problem-report", { bytes, name }),
+  emailSupport: (subject, body) => ipcRenderer.invoke("email-support", { subject, body }),
+  showReportFile: (file) => ipcRenderer.invoke("show-report-file", { file }),
   dbPasswordStatus: (config) => ipcRenderer.invoke("db-password-status", config), // TASKS.csv #621
   dbForgetPassword: (config) => ipcRenderer.invoke("db-forget-password", config), // TASKS.csv #621
   dbDisconnect: (id) => ipcRenderer.invoke("db-disconnect", { id }),

@@ -432,6 +432,74 @@ function createMainWindow() {
 }
 
 ipcMain.on("set-dirty-state", (_e, dirty) => { rendererDirty = !!dirty; });
+
+// ---------- TASKS.csv #598 — Help > Report a problem ----------
+// No server (offline + privacy pillars): the renderer builds a zip the USER sends. These handlers give it what only
+// the main process can: system facts, a capture of the window, the Python engine's log tail, a file in Downloads,
+// and a mailto: with a FIXED recipient (the renderer never chooses where it goes).
+// Unclean-exit detection: a marker written at launch and removed at a normal quit; still there at the next launch
+// means GeoStrix did not close normally (a crash, a kill, a power cut).
+const SUPPORT_EMAIL = "support@geostrix.com";
+const runMarkerPath = () => path.join(app.getPath("userData"), "running.marker");
+let lastExitUnclean = false;
+function markRunning() {
+  try { lastExitUnclean = fs.existsSync(runMarkerPath()); fs.writeFileSync(runMarkerPath(), new Date().toISOString()); } catch { /* best effort */ }
+}
+function clearRunningMarker() { try { fs.unlinkSync(runMarkerPath()); } catch { /* best effort */ } }
+const tailOf = (file, maxBytes = 64 * 1024) => {
+  try {
+    const st = fs.statSync(file);
+    const fd = fs.openSync(file, "r");
+    const len = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    return buf.toString("utf8");
+  } catch { return null; }
+};
+ipcMain.handle("problem-report-info", async () => {
+  const os = require("os");
+  let gpu = null;
+  try { const g = await app.getGPUInfo("basic"); gpu = (g.gpuDevice || []).map((d) => `vendor ${d.vendorId?.toString(16)} device ${d.deviceId?.toString(16)}${d.active ? " (active)" : ""}`).join("; ") || null; } catch { /* not available */ }
+  const { screen } = require("electron");
+  const disp = screen.getPrimaryDisplay();
+  return {
+    app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node,
+    os: `${os.type()} ${os.release()} (${typeof os.version === "function" ? os.version() : ""}) ${os.arch()}`,
+    cpu: `${os.cpus()[0]?.model || "?"} × ${os.cpus().length}`,
+    memoryGB: { total: +(os.totalmem() / 1e9).toFixed(1), free: +(os.freemem() / 1e9).toFixed(1) },
+    display: `${disp.size.width}×${disp.size.height} @ ${disp.scaleFactor}x`,
+    gpu, packaged: app.isPackaged, lastExitUnclean,
+    sidecarLogTail: tailOf(path.join(app.getPath("userData"), "python-sidecar.log")),
+  };
+});
+ipcMain.handle("capture-window", async (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w) return null;
+  const img = await w.webContents.capturePage();
+  return new Uint8Array(img.toPNG());
+});
+ipcMain.handle("save-problem-report", (_e, { bytes, name }) => {
+  const safe = String(name || "GeoStrix-report.zip").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+  if (!/\.zip$/i.test(safe)) return { ok: false, error: "A report must be a .zip file." };
+  const dir = app.getPath("downloads");
+  let target = path.join(dir, safe), n = 1;
+  while (fs.existsSync(target)) target = path.join(dir, safe.replace(/\.zip$/i, `-${++n}.zip`));
+  fs.writeFileSync(target, Buffer.from(bytes));
+  shell.showItemInFolder(target);
+  return { ok: true, path: target, name: path.basename(target) };
+});
+ipcMain.handle("email-support", (_e, { subject, body }) => {
+  const q = `subject=${encodeURIComponent(String(subject || "").slice(0, 200))}&body=${encodeURIComponent(String(body || "").slice(0, 1800))}`;
+  shell.openExternal(`mailto:${SUPPORT_EMAIL}?${q}`);
+  return { ok: true, to: SUPPORT_EMAIL };
+});
+ipcMain.handle("show-report-file", (_e, { file }) => {
+  const f = String(file || "");
+  if (path.dirname(f) !== app.getPath("downloads") || !/\.zip$/i.test(f) || !fs.existsSync(f)) return { ok: false };
+  shell.showItemInFolder(f);
+  return { ok: true };
+});
 // TASKS.csv #622 — Electron on Windows: after a native alert() / confirm() / prompt() closes, the window is in
 // front again but its page has lost focus (document.hasFocus() false, measured), so clicks no longer put the
 // cursor in text boxes ("I can't click on the in-app window after using it once"). Re-activating the window
@@ -896,6 +964,7 @@ ipcMain.handle("db-live-list-tables", async (_e, { id }) => {
 // dropped every DB connection (the renderer kept showing them live). will-quit fires only once every
 // window has actually closed, i.e. the quit is really happening.
 app.on("will-quit", () => {
+  clearRunningMarker(); // TASKS.csv #598 — a normal quit
   for (const { client } of liveDbConnections.values()) { try { client.end(); } catch (_) {} }
   liveDbConnections.clear();
 });
@@ -1050,6 +1119,8 @@ function buildMenu() {
         // on the renderer side ever handled — clicking it silently did nothing. Now shares the same
         // modal as the new Keyboard Shortcuts entry (see ShortcutsModal in App.jsx), just opened to a
         // different tab.
+        { type: "separator" },
+        { label: "Report a Problem…", click: () => mainWindow?.webContents.send("menu", "report-problem") }, // TASKS.csv #598
         { label: "About GeoStrix", click: () => mainWindow?.webContents.send("menu", "about") },
       ],
     },
@@ -1122,6 +1193,7 @@ function lockDownPermissions() {
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return; // #556 — quitting; never open a second window
   lockDownPermissions(); // #589
+  markRunning(); // TASKS.csv #598 — did the last session end normally?
   setTileUserAgent(); // TASKS.csv #300 — before any window exists, so the first tile request carries it
   if (!isDev) registerAppProtocol(); // #562
   createMainWindow();

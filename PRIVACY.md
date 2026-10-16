@@ -12,6 +12,12 @@ SignPath Foundation requires participating projects to have a privacy policy.
 reports or telemetry. There is no analytics SDK in the application, and no server operated by this
 project that receives data from it.
 
+**Problem reports.** *Help → Report a Problem* writes a zip file to your Downloads folder containing
+what you typed, a picture of the GeoStrix window, system details (versions, operating system, memory,
+graphics card), recent error messages and, unless you untick it, the Python engine's recent log. The
+current project is included only if you tick it. GeoStrix sends nothing itself: it opens a draft email
+to support@geostrix.com in your own email app, and the report is shared only if you attach it and send it.
+
 ## Where your data lives
 
 Your project data — drillhole collars, surveys, interval layers, assays, rasters, and everything else

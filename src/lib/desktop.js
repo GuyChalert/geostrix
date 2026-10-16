@@ -185,6 +185,27 @@ export async function dbForgetPassword(config) {
   if (!d?.dbForgetPassword) return { ok: true, forgotten: false };
   return d.dbForgetPassword(config);
 }
+// TASKS.csv #598 — Help > Report a problem. In a plain browser there is no window capture or Downloads folder:
+// the report is offered as a normal download and the email opens through mailto:.
+export const SUPPORT_EMAIL = "support@geostrix.com";
+export async function problemReportInfo() {
+  if (d?.problemReportInfo) return d.problemReportInfo();
+  return { app: "browser preview", os: navigator.userAgent, memoryGB: null, lastExitUnclean: false, sidecarLogTail: null, packaged: false };
+}
+export async function captureWindow() { return d?.captureWindow ? d.captureWindow() : null; }
+export async function saveProblemReport(bytes, name) {
+  if (d?.saveProblemReport) return d.saveProblemReport(bytes, name);
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return { ok: true, path: null, name };
+}
+export async function emailSupport(subject, body) {
+  if (d?.emailSupport) return d.emailSupport(subject, body);
+  window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return { ok: true, to: SUPPORT_EMAIL };
+}
+export async function showReportFile(file) { return d?.showReportFile ? d.showReportFile(file) : { ok: false }; }
 export async function dbDisconnect(id) {
   if (!d) return { ok: false, error: "Database connections require the desktop app." };
   return d.dbDisconnect(id);

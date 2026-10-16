@@ -8,7 +8,7 @@ import ErrorBoundary from "./components/ErrorBoundary.jsx"; // TASKS.csv #442
 import { pdfOptions } from "./lib/pageFormats.js"; // TASKS.csv #398
 import { iconAction, activateOnKey } from "./lib/a11y.js"; // TASKS.csv #296 — keyboard-reachable icon-only controls
 import { DESURVEY_METHODS } from "./lib/desurvey.js"; // TASKS.csv #135 — status-bar desurvey-method picker
-import { onMenu, onSectionSnapshot, onSectionContacts, savePDF, pythonHealth, isSidecarRunning, onUpdaterEvent, downloadUpdate, installUpdate, isDesktop, setDirtyState } from "./lib/desktop.js";
+import { onMenu, onSectionSnapshot, onSectionContacts, savePDF, pythonHealth, isSidecarRunning, onUpdaterEvent, downloadUpdate, installUpdate, isDesktop, setDirtyState, captureWindow, problemReportInfo } from "./lib/desktop.js";
 import ViewerModule from "./modules/ViewerModule.jsx";
 // TASKS.csv #438 — memoised so a store write while the viewer is hidden (FreezeStore below) skips it entirely
 const MemoViewerModule = React.memo(ViewerModule);
@@ -28,6 +28,7 @@ const CartographyModule = React.lazy(() => import("./modules/CartographyModule.j
 // as the tab modules above rather than pulling it (and papaparse's CSV-building path it shares with
 // everything else, already loaded regardless) into the eagerly-loaded main bundle for no benefit.
 const ShortcutsModal = React.lazy(() => import("./components/ShortcutsModal.jsx")); // TASKS.csv #476
+const ReportProblemModal = React.lazy(() => import("./components/ReportProblemModal.jsx")); // TASKS.csv #598
 const ProjectCrsModal = React.lazy(() => import("./components/ProjectCrsModal.jsx")); // TASKS.csv #615
 const ProjectReportModal = React.lazy(() => import("./components/ProjectReportModal.jsx"));
 
@@ -93,6 +94,16 @@ export default function App() {
   useEffect(() => onProjectCrsRequest(({ reason, points, resolve }) => setCrsRequest((cur) => (cur ? { ...cur, resolvers: [...cur.resolvers, resolve] } : { reason, points, resolvers: [resolve] }))), []);
   const finishCrsRequest = (epsg) => setCrsRequest((cur) => { cur?.resolvers.forEach((r) => r(epsg)); return null; });
   const [shortcutsTab, setShortcutsTab] = useState(null); // null | "shortcuts" | "python" (#391) | "about"
+  // TASKS.csv #598 — Help > Report a problem: { screenshot, crashed } while open; the window is captured BEFORE the
+  // dialog opens, so the picture shows the problem, not the dialog
+  const [reportProblem, setReportProblem] = useState(null);
+  const [lastExitUnclean, setLastExitUnclean] = useState(false);
+  const openReportProblem = async (crashed = false) => {
+    let screenshot = null;
+    try { screenshot = await captureWindow(); } catch { /* no capture */ }
+    setReportProblem({ screenshot, crashed });
+  };
+  useEffect(() => { problemReportInfo().then((i) => { if (i?.lastExitUnclean) setLastExitUnclean(true); }).catch(() => {}); }, []);
   const [reportOpen, setReportOpen] = useState(false); // TASKS.csv #138
   // TASKS.csv #37 — auto-update status. Only the states worth surfacing to the user get shown in the
   // status bar (below) — "checking"/"not-available" stay silent, since a routine background check
@@ -251,6 +262,7 @@ Your work is still open. Try saving to a different folder (a full disk, a read-o
       else if (action === "save-project-as") doSave({ saveAs: true }); // #553
       else if (action === "shortcuts") setShortcutsTab("shortcuts");
       else if (action === "about") setShortcutsTab("about");
+      else if (action === "report-problem") openReportProblem(); // #598
       else if (action === "undo") undo();
       else if (action === "redo") redo();
     });
@@ -349,6 +361,14 @@ Your work is still open. Try saving to a different folder (a full disk, a read-o
           <button onClick={doDiscardRecovery} style={recoveryBtn}>Discard…</button>
         </div>
       )}
+      {/* TASKS.csv #598 — the last session did not end normally (crash, forced close, power cut): offer a report */}
+      {lastExitUnclean && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", background: "var(--color-bg-subtle)", borderBottom: "1px solid var(--color-border)", fontSize: "var(--font-size-base)" }}>
+          <span style={{ flex: 1 }}>GeoStrix didn't close normally last time. If it crashed or froze, a short report helps fix it.</span>
+          <button onClick={() => { setLastExitUnclean(false); openReportProblem(true); }} style={recoveryBtn}>Report it…</button>
+          <button onClick={() => setLastExitUnclean(false)} style={recoveryBtn} aria-label="Dismiss">Dismiss</button>
+        </div>
+      )}
       {recoveryNote && (
         <div role="status" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", background: "var(--color-bg-subtle)", borderBottom: "1px solid var(--color-border)", fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)" }}>
           <RotateCcw size={14} style={{ flexShrink: 0 }} />
@@ -443,6 +463,7 @@ Your work is still open. Try saving to a different folder (a full disk, a read-o
 
       <StatusBar onEpsg={() => requestProjectCrs()} pyStatus={pyStatus} updater={updater} onHelp={() => setShortcutsTab("shortcuts")} onPython={() => setShortcutsTab("python")} />
       {crsRequest && <Suspense fallback={null}><ProjectCrsModal reason={crsRequest.reason} points={crsRequest.points} onDone={finishCrsRequest} /></Suspense>}
+      {reportProblem && <Suspense fallback={null}><ReportProblemModal screenshot={reportProblem.screenshot} crashed={reportProblem.crashed} onClose={() => setReportProblem(null)} /></Suspense>}
       {shortcutsTab && <Suspense fallback={null}><ShortcutsModal initialTab={shortcutsTab} pyStatus={pyStatus} onClose={() => setShortcutsTab(null)} /></Suspense>}
       {reportOpen && (
         <Suspense fallback={null}>
