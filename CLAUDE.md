@@ -137,8 +137,11 @@ that phrasing), that's a flag this task deserves a *real* verification pass now 
 - Security-sensitive copy is taken seriously and shouldn't regress: e.g. Postgres passwords are
   explicitly "session only, never saved to disk or the project file" — this is now a *live*
   connection held in `electron/main.js`'s in-memory `liveDbConnections` Map for the app session,
-  not a fresh connection per query, but the "never touches disk" guarantee must hold regardless of
-  future changes there.
+  not a fresh connection per query. Since TASKS.csv #621 (Matt's request, 2026-10-16) a password MAY be
+  remembered, but only opt-in ("Remember the password on this computer"), only encrypted by the OS
+  (Electron safeStorage / Windows DPAPI, `electron/dbCredentials.js`, never a plain-text fallback),
+  only in userData — never in the project file or localStorage — and it is never sent back to the
+  renderer. Keep all four of those properties if you touch this.
 - **Design tokens (colour + type).** `src/styles/app.css`'s `:root` block is the single source of
   truth for both, mirrored value-for-value in `src/lib/theme.js` (`colors`, `fontSizes`). Reach for
   `var(--color-*)` / `var(--font-size-*)` by default — they work in class rules AND in the inline
