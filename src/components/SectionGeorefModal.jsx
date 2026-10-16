@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X, Upload, Trash2, MapPin } from "./icons.js";
 import { sectionLine, fitSectionTransform, sectionResiduals, sectionImageCorners, sectionFitSummary } from "../lib/sectionGeoref.js";
 import { useEscapeKey } from "../lib/useEscapeKey.js";
@@ -34,16 +34,54 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
   const [busy, setBusy] = useState(false);
   const fileInput = useRef(null);
   const canvasRef = useRef(null);
+  // TASKS.csv #633 — a PDF: { doc, name, thumbs, numPages } while its page is being picked
+  const [pdf, setPdf] = useState(null);
+  const [pdfBusy, setPdfBusy] = useState(null); // status text while PDF.js works
+  const [pageNo, setPageNo] = useState("");
+  const pdfDocRef = useRef(null);
+  useEffect(() => () => { pdfDocRef.current?.destroy?.(); }, []);
 
   const scale = img ? Math.min(1, DISPLAY_MAX / Math.max(img.width, img.height)) : 1;
   const dispW = img ? Math.round(img.width * scale) : 0, dispH = img ? Math.round(img.height * scale) : 0;
 
+  const loadPdf = async (file) => {
+    setError(null); setImg(null); setPoints([]);
+    setPdfBusy("Opening the PDF…");
+    try {
+      const { openPdf, pdfThumbnails } = await import("../lib/pdfPages.js");
+      pdfDocRef.current?.destroy?.();
+      const doc = await openPdf(await file.arrayBuffer());
+      pdfDocRef.current = doc;
+      const baseName = file.name.replace(/\.pdf$/i, "");
+      if (doc.numPages === 1) { setPdf({ doc, name: baseName, thumbs: [], numPages: 1 }); await pickPdfPage(doc, 1, baseName); return; }
+      setPdfBusy(`Making page previews (${Math.min(doc.numPages, 40)} of ${doc.numPages})…`);
+      const thumbs = await pdfThumbnails(doc, 40);
+      setPdf({ doc, name: baseName, thumbs, numPages: doc.numPages });
+    } catch (err) {
+      setError(`Couldn't read this PDF: ${err.message || err}`);
+    } finally { setPdfBusy(null); }
+  };
+  const pickPdfPage = async (doc, n, baseName) => {
+    setPdfBusy(`Rendering page ${n}…`); setError(null);
+    try {
+      const { renderPdfPage } = await import("../lib/pdfPages.js");
+      const canvas = await renderPdfPage(doc, n, 4000);
+      setImg({ bitmap: canvas, width: canvas.width, height: canvas.height });
+      setPoints([]);
+      setName((cur) => cur || `${baseName} p.${n}`);
+      setPdf((p) => (p ? { ...p, page: n } : p));
+    } catch (err) {
+      setError(`Couldn't draw page ${n}: ${err.message || err}`);
+    } finally { setPdfBusy(null); }
+  };
+
   const loadImage = (file) => {
-    setError(null);
+    if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") { loadPdf(file); return; }
+    setError(null); setPdf(null);
     const url = URL.createObjectURL(file);
     const bitmap = new window.Image();
     bitmap.onload = () => { setImg({ bitmap, width: bitmap.naturalWidth, height: bitmap.naturalHeight }); setPoints([]); setName((n) => n || file.name.replace(/\.[^.]+$/, "")); URL.revokeObjectURL(url); };
-    bitmap.onerror = () => { setError("Couldn't read this image — use a PNG or JPG (export the section from a PDF as an image first)."); URL.revokeObjectURL(url); };
+    bitmap.onerror = () => { setError("Couldn't read this image — use a PDF, PNG or JPG."); URL.revokeObjectURL(url); };
     bitmap.src = url;
   };
 
@@ -104,15 +142,37 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
         <div style={header}>
           <div>
             <div style={{ fontSize: "var(--font-size-lg)", color: "var(--color-accent-dark)", fontWeight: 600 }}>Georeference a section image</div>
-            <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)", marginTop: 2 }}>Put a cross-section figure (PNG/JPG) upright in the 3D view: choose its section line, then click points on it and type their position and elevation.</div>
+            <div style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)", marginTop: 2 }}>Put a cross-section figure (a PDF page, PNG or JPG) upright in the 3D view: choose its section line, then click points on it and type their position and elevation.</div>
           </div>
           <X role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label="Close" size={18} style={{ cursor: "pointer", color: "var(--color-text-secondary)" }} onClick={onClose} />
         </div>
 
         <div style={{ padding: 16, overflow: "auto", display: "flex", gap: 16, flex: 1, flexWrap: "wrap" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <button onClick={() => fileInput.current.click()} style={btn(false)}><Upload size={14} style={{ marginRight: 6 }} /> Load section image (PNG/JPG)…</button>
-            <input ref={fileInput} type="file" accept=".png,.jpg,.jpeg" style={{ display: "none" }} onChange={(e) => { const f = e.target.files[0]; if (f) loadImage(f); e.target.value = ""; }} />
+            <button onClick={() => fileInput.current.click()} style={btn(false)}><Upload size={14} style={{ marginRight: 6 }} /> Load section image (PDF / PNG / JPG)…</button>
+            <input ref={fileInput} type="file" accept=".pdf,.png,.jpg,.jpeg" style={{ display: "none" }} onChange={(e) => { const f = e.target.files[0]; if (f) loadImage(f); e.target.value = ""; }} />
+            {pdfBusy && <div style={note}>{pdfBusy}</div>}
+            {pdf && pdf.numPages > 1 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: DISPLAY_MAX }}>
+                <div style={note}>{pdf.page ? `Page ${pdf.page} of ${pdf.numPages} — pick another:` : `${pdf.name}.pdf has ${pdf.numPages} pages — click the one with the section:`}</div>
+                <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                  {pdf.thumbs.map((t) => (
+                    <button key={t.page} type="button" onClick={() => pickPdfPage(pdf.doc, t.page, pdf.name)} disabled={!!pdfBusy} title={`Page ${t.page}`} aria-label={`Use page ${t.page}`}
+                      style={{ flexShrink: 0, padding: 2, background: "var(--color-bg)", border: pdf.page === t.page ? "2px solid var(--color-accent)" : "1px solid var(--color-border)", borderRadius: 4, cursor: "pointer" }}>
+                      <img src={t.dataUrl} alt="" width={Math.round(t.width * 0.6)} height={Math.round(t.height * 0.6)} style={{ display: "block" }} />
+                      <div style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>{t.page}</div>
+                    </button>
+                  ))}
+                </div>
+                {pdf.numPages > pdf.thumbs.length && (
+                  <label style={{ ...note, display: "flex", gap: 6, alignItems: "center" }}>
+                    Page number <input type="number" min={1} max={pdf.numPages} value={pageNo} onChange={(e) => setPageNo(e.target.value)} style={{ ...numInput, width: 70 }} aria-label="PDF page number" />
+                    <button type="button" style={{ ...btn(false), padding: "4px 10px" }} disabled={!!pdfBusy || !(Number(pageNo) >= 1 && Number(pageNo) <= pdf.numPages)} onClick={() => pickPdfPage(pdf.doc, Math.round(Number(pageNo)), pdf.name)}>Open page</button>
+                    <span>(previews show the first {pdf.thumbs.length})</span>
+                  </label>
+                )}
+              </div>
+            )}
             {img ? (
               <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onCanvasClick} aria-label="Click to add a control point"
                 style={{ position: "relative", width: dispW, height: dispH, cursor: "crosshair", border: "1px solid var(--color-border)", background: "#ececec" }}>
@@ -125,9 +185,9 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
                   </div>
                 ))}
               </div>
-            ) : (
+            ) : pdf ? null : (
               <div style={{ width: DISPLAY_MAX, maxWidth: "100%", height: 360, border: "1px dashed var(--color-border-light)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-muted)", fontSize: "var(--font-size-base)", textAlign: "center", padding: 12 }}>
-                Load the section figure. Tip: points where labelled grid lines cross (an elevation line and a distance or easting tick) are the easiest to read.
+                Load the section figure — a page of a PDF report, or a PNG/JPG. Tip: points where labelled grid lines cross (an elevation line and a distance or easting tick) are the easiest to read.
               </div>
             )}
           </div>

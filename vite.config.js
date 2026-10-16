@@ -1,6 +1,26 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// TASKS.csv #633 — PDF.js (lazy-loaded for PDF section images) fetches its image decoders (JBIG2 / JPEG 2000 /
+// colour profiles — common in scanned report PDFs) and the 14 standard PDF fonts at run time. They are copied
+// from node_modules into public/pdfjs/ (gitignored) so the dev server and the build both serve them from the
+// app itself. quickjs-eval (PDF.js's JavaScript engine for scripts inside PDFs) is NOT copied: scripting stays off.
+function copyPdfjsAssets() {
+  const root = fileURLToPath(new URL(".", import.meta.url)); // the project folder, wherever Vite was started from
+  const src = `${root}node_modules/pdfjs-dist`, out = `${root}public/pdfjs`;
+  if (!existsSync(src)) return;
+  for (const dir of ["wasm", "standard_fonts", "iccs"]) {
+    mkdirSync(`${out}/${dir}`, { recursive: true });
+    for (const f of readdirSync(`${src}/${dir}`)) {
+      if (/quickjs/i.test(f)) continue;
+      cpSync(`${src}/${dir}/${f}`, `${out}/${dir}/${f}`);
+    }
+  }
+  cpSync(`${src}/LICENSE`, `${out}/LICENSE-pdfjs.txt`); // Apache-2.0 notice ships with the bundled PDF.js
+}
 
 // TASKS.csv #347 — Content-Security-Policy for the packaged renderer. Build-only: the dev server needs
 // Vite's inline React-refresh preamble and its HMR websocket, which a strict policy would block, and the
@@ -46,7 +66,7 @@ function cspPlugin() {
 }
 
 export default defineConfig({
-  plugins: [react(), cspPlugin()],
+  plugins: [react(), cspPlugin(), { name: "geostrix-pdfjs-assets", config: copyPdfjsAssets }],
   base: "./",
   server: { port: 5173, strictPort: true },
   build: {
@@ -80,7 +100,8 @@ export default defineConfig({
           // catch-all vendor chunk, or they load at startup anyway: GeoTIFF's compression decoders (zstd
           // 154 KB, LERC, deflate — loaded by geotiff on demand, only for TIFFs that need them) and sql.js
           // (GeoPackage / SQL workspace). Returning undefined lets Rollup place them with their importers.
-          if (/node_modules[\/](zstddec|lerc|pako|sql\.js|xml-utils|web-worker|@petamoriken)[\/]/.test(id)) return undefined;
+          // TASKS.csv #633 — and pdfjs-dist (PDF section images): ~460 KB that only a PDF opened in that dialog needs.
+          if (/node_modules[\/](zstddec|lerc|pako|sql\.js|xml-utils|web-worker|@petamoriken|pdfjs-dist)[\/]/.test(id)) return undefined;
           return "vendor";
         },
       },

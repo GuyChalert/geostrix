@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+# TASKS.csv #633 — PDF.js decoders/fonts, copied from node_modules by vite.config.js
+public/pdfjs/
 dist-electron/
 release/
 
