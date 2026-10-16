@@ -3,7 +3,7 @@
 GeoStrix is a desktop application that runs on your own machine. It has no accounts, no sign-in, and
 no analytics or telemetry of any kind.
 
-This policy describes the application's behaviour as of version 0.1.9. It is published here because
+This policy describes the application's behaviour as of version 0.1.36. It is published here because
 SignPath Foundation requires participating projects to have a privacy policy.
 
 ## What is collected
@@ -18,9 +18,11 @@ Your project data — drillhole collars, surveys, interval layers, assays, raste
 you import — stays on your own computer, in the `.geostrix.json` project file you choose to save, plus
 an autosave file in the application's own user-data directory. It is never uploaded anywhere.
 
-Database passwords entered in the *Connect database* dialog are held in memory for the duration of the
-application session only. They are not written to the project file, to the autosave file, or anywhere
-else on disk.
+Database passwords entered in the *Connect to database* dialog are, by default, held in memory for the
+application session only. If you tick *Remember the password on this computer*, the password is stored
+encrypted by the operating system (Electron safeStorage; on Windows, DPAPI — readable only by your Windows
+account on that computer) in the application's user-data folder. It is never written to the project file
+or the autosave file, and *Forget it* deletes it.
 
 ## Network connections the application makes
 
@@ -30,9 +32,9 @@ GeoStrix only makes network requests as a direct result of features you use:
 | --- | --- | --- |
 | You add a basemap | `tile.openstreetmap.org`, `tile.tracestrack.com`, `tiles.maps.eox.at` | Fetch map tiles for display |
 | You fetch terrain | `s3.amazonaws.com/elevation-tiles-prod` | Download public SRTM/Terrarium elevation tiles |
-| On startup, and via *Help → Check for Updates* | `github.com` / `api.github.com` | Check whether a newer release exists, and download it if you choose to update |
+| On startup (can be turned off in the Help menu), and via *Help → Check for Updates* | `github.com` / `api.github.com` | Check whether a newer release exists, and download it if you choose to update |
 | You connect to a database | The host **you** enter | Query your own PostgreSQL database |
-| You add a WMS/WMTS layer | The server **you** enter | Fetch the layer you requested |
+| You add a WMS / WMTS / WFS layer | The server **you** enter | Fetch the layer you requested |
 
 These requests necessarily reveal your IP address to the operator of the service being contacted
 (OpenStreetMap, Amazon S3, GitHub, or a server you chose), in the same way that visiting any website
@@ -53,4 +55,4 @@ Material changes to this policy will accompany a release and be noted in the rel
 
 ## Contact
 
-Questions: open an issue at <https://github.com/Matt-Mendes-ai/geostrix/issues>.
+Questions: <support@geostrix.com>, or open an issue at <https://github.com/Matt-Mendes-ai/geostrix/issues>.

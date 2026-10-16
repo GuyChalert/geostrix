@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GeoStrix — free 3D software for mineral exploration</title>
+  <meta name="description" content="GeoStrix is free, open-source 3D software for mineral exploration: drillholes, geochemistry, geophysics, modelling and drill planning on an ordinary laptop, offline, with no licence to buy.">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="style.css">
+  <meta property="og:title" content="GeoStrix — free 3D software for mineral exploration">
+  <meta property="og:description" content="Drillholes, geochemistry, geophysics, modelling and drill planning in one free, open-source desktop app.">
+  <meta property="og:image" content="https://geostrix.com/img/3dview.webp">
+  <meta property="og:url" content="https://geostrix.com/">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="/"><img src="img/icon-128.png" alt="" width="34" height="34">GeoStrix</a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a class="hide-sm" href="#support">Support</a>
+        <a class="hide-sm" href="https://github.com/Matt-Mendes-ai/geostrix">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div>
+          <h1>3D software for <span>mineral exploration</span>, free for everyone</h1>
+          <p class="lead">Drillholes, geochemistry, geophysics, modelling and drill planning in one place — on an ordinary laptop, offline, with no account and no licence to buy.</p>
+          <a class="btn primary" data-download href="https://github.com/Matt-Mendes-ai/geostrix/releases/latest">Download for Windows</a>
+          <a class="btn ghost" href="https://github.com/Matt-Mendes-ai/geostrix">View the source</a>
+          <div class="dl-note" data-version>Windows 10 / 11 (64-bit) · free and open source (MIT)</div>
+        </div>
+        <img class="shot" src="img/3dview.webp" width="1400" height="788" alt="GeoStrix 3D view: drillholes coloured by alteration, mineralization and veins, with a legend and a reference grid">
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Why GeoStrix</h2>
+        <p class="sub">GeoStrix is made to support mineral exploration everywhere, especially where resources are scarce.</p>
+        <div class="pillars">
+          <div class="card"><h3>Built for exploration</h3><p>Made for exploration geologists, not adapted from general CAD or GIS: drillholes, geochemistry and geophysics come together to answer one question — where to drill next.</p></div>
+          <div class="card"><h3>Easy to use</h3><p>Drop in your files and GeoStrix recognises them, checks the data, and explains what it did in plain language.</p></div>
+          <div class="card"><h3>Light enough for a cheap computer</h3><p>Runs on an ordinary laptop with no special hardware and no internet connection.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt" id="features">
+      <div class="wrap">
+        <h2>What it does</h2>
+        <p class="sub">Import CSV and Excel files, shapefiles, GeoPackages, GeoTIFFs and DXF, or connect straight to a PostgreSQL or MySQL database.</p>
+        <div class="features">
+          <div><h3>Drillholes in 3D</h3><p>Collars, surveys and every kind of log; desurveyed traces with terrain, cross-sections, level plans, fence diagrams, strip logs and data checks.</p></div>
+          <div><h3>Geochemistry</h3><p>Classification and alteration diagrams, statistics, compositing, best intercepts, and QA/QC of standards, blanks and duplicates.</p></div>
+          <div><h3>Geophysics</h3><p>Point surveys, grids and voxel models, plus magnetic, gravity and 2D DC resistivity / IP inversion.</p></div>
+          <div><h3>Modelling and targeting</h3><p>Implicit geological surfaces and faults, grade shells, block models, structural analysis and drill planning to a target.</p></div>
+          <div><h3>Maps and reports</h3><p>Any coordinate system worldwide, map and web layers, claims, and print-ready layouts exported to PDF.</p></div>
+          <div><h3>Your data stays yours</h3><p>No account, no telemetry, no cloud. Projects are files on your computer. <a href="privacy.html">Privacy</a></p></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>A look inside</h2>
+        <p class="sub">Shown with the bundled sample project: 37 real drillholes from British Columbia's public ARIS database (report 37584).</p>
+        <div class="gallery">
+          <figure><img src="img/geochem.webp" width="1400" height="788" loading="lazy" alt="Alteration box plot: Ishikawa alteration index against the chlorite-carbonate-pyrite index, samples classified by alteration trend"><figcaption>Alteration box plot (Large et al. 2001), classified against the logged lithology.</figcaption></figure>
+          <figure><img src="img/striplog.webp" width="760" height="769" loading="lazy" alt="Strip log of drillhole 17HR-272 with lithology, magnetic susceptibility, alteration, veins, RQD and gold"><figcaption>Strip log: every log and assay down one hole.</figcaption></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt">
+      <div class="wrap">
+        <div class="notice">
+          <h3>An exploration tool, not resource-estimation software</h3>
+          <p>GeoStrix's grade tools use nearest-neighbour, inverse-distance or moving-least-squares interpolation, with no kriging, classification, dilution or recovery. Nothing it produces is a Mineral Resource under NI 43-101, JORC or any comparable code; public disclosure of tonnage or grade needs an estimate by a Qualified Person.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="download">
+      <div class="wrap two">
+        <div>
+          <h2>Download</h2>
+          <p>GeoStrix is free and open source under the MIT licence. The installer includes everything, including the Python engine used for implicit modelling and inversions. It updates itself when a new version is out.</p>
+          <a class="btn primary" data-download href="https://github.com/Matt-Mendes-ai/geostrix/releases/latest">Download for Windows</a>
+          <p class="dl-note" style="color: var(--muted)" data-version>Windows 10 / 11 (64-bit)</p>
+          <p style="font-size: 15px; color: var(--muted)">Every release, its checksums and the full source are on <a href="https://github.com/Matt-Mendes-ai/geostrix/releases">GitHub</a>.</p>
+        </div>
+        <div>
+          <h3>If Windows warns you</h3>
+          <p style="color: var(--muted); font-size: 16px">GeoStrix is not code-signed yet, so Windows SmartScreen or your antivirus may hold a brand-new installer the first time:</p>
+          <ol class="steps">
+            <li>On “Windows protected your PC”, click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+            <li>If nothing happens at all, your antivirus may have quarantined it: restore the file from its quarantine, or right-click it → <strong>Properties</strong> → tick <strong>Unblock</strong>.</li>
+            <li>Updates installed from inside GeoStrix are not affected.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt" id="support">
+      <div class="wrap two">
+        <div>
+          <h2>Support</h2>
+          <p>Found a bug, or have an idea? Email <a href="mailto:support@geostrix.com">support@geostrix.com</a>, or open an issue on <a href="https://github.com/Matt-Mendes-ai/geostrix/issues">GitHub</a>. Saying what you did, what you expected and your GeoStrix version (Help → About GeoStrix) helps a lot.</p>
+        </div>
+        <div>
+          <h2>Open source</h2>
+          <p>The code is on <a href="https://github.com/Matt-Mendes-ai/geostrix">GitHub</a> under the MIT licence: use it, study it, change it. Contributions are welcome — start with an issue.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="wrap">
+      <span>© 2026 Matt Mendes · GeoStrix is free software (MIT)</span>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://github.com/Matt-Mendes-ai/geostrix">GitHub</a>
+      <span class="right">This site uses no cookies and no tracking.</span>
+    </div>
+  </footer>
+  <script src="download.js" defer></script>
+</body>
+</html>
