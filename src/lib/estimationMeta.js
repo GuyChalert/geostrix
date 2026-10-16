@@ -2,6 +2,21 @@
 // 3D view needs at startup; the estimator itself loads when an estimate or grade shell is run.
 
 export const MAX_BLOCKS = 200000; // keeps a synchronous brute-force estimation pass responsive — see estimateBlockModel
+// TASKS.csv #625 — the grade shell's block budget can be raised (it runs in a worker since #520, with progress and
+// Cancel). 5 million is the ceiling: memory stays modest on an 8 GB laptop and the run is minutes, not hours.
+export const BLOCK_BUDGETS = [200000, 1000000, 2000000, 5000000];
+export const MAX_BLOCK_BUDGET = 5000000;
+// the grid a box needs at a cell size (the same rounding as estimation.js's gridDims), and the smallest cell (to
+// 0.5 m) that keeps a box within a budget
+export function gridBlockCount(bounds, cell) {
+  const n = (a, b) => Math.max(1, Math.round((b - a) / Math.max(0.01, cell)));
+  return n(bounds.xmin, bounds.xmax) * n(bounds.ymin, bounds.ymax) * n(bounds.zmin, bounds.zmax);
+}
+export function cellToFit(bounds, budget, from = 0.5) {
+  let c = Math.max(0.5, from);
+  while (gridBlockCount(bounds, c) > budget && c < 1e5) c = Math.ceil((c * 1.02) * 2) / 2;
+  return c;
+}
 
 export const SUPPORT_COLORS = { interpolated: "#3faf5a", extrapolated: "#e0a92b", unsupported: "#cc4b3c" };
 

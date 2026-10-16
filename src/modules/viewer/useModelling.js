@@ -16,7 +16,7 @@ import { pythonImplicitModel } from "../../lib/desktop.js";
 import { makeRng, perturbPoints, perturbOrientation, pointsToMeshDistance, spreadSummary, spreadColor, SPREAD_NOT_REPRODUCED } from "../../lib/surfaceSpread.js";
 import { colorForLithology, colorForAlteration, colorForStructure, minMax, roleForLithology } from "../../lib/layers.js";
 import { computeMeshVolume } from "../../lib/volumetrics.js";
-import { MAX_BLOCKS, SUPPORT_COLORS } from "../../lib/estimationMeta.js"; // #552 — the estimator itself loads in the run functions
+import { MAX_BLOCKS, SUPPORT_COLORS, MAX_BLOCK_BUDGET, gridBlockCount, cellToFit } from "../../lib/estimationMeta.js"; // budget: #625 // #552 — the estimator itself loads in the run functions
 import { compositeDownhole, rawSampleIntervals, capAudit, capAuditText } from "../../lib/geochem.js"; // capAudit: #533; rawSampleIntervals: #571
 import { excludeQAQC } from "../../lib/qaqc.js";
 import { errorNotice } from "../../lib/notices.js";
@@ -63,6 +63,8 @@ export function useModelling(ctx) {
     modelResolution,
     numericCapValue,
     numericCellSize,
+    numericMaxBlocks, // TASKS.csv #625
+    setNumericBudgetHint, // TASKS.csv #625
     numericCloseShell,
     numericCompositeLength,
     numericCutoff,
@@ -1393,12 +1395,24 @@ export function useModelling(ctx) {
           (bounds.xmax - bounds.xmin) ** 2 + (bounds.ymax - bounds.ymin) ** 2 + (bounds.zmax - bounds.zmin) ** 2
         );
         const effectiveRadius = numericSearchRadius > 0 ? numericSearchRadius : gridDiagonal;
+        // TASKS.csv #625 — the block budget is the user's (200,000 by default, up to 5 million); checked here, before
+        // the worker starts, so an over-budget run says which cell size WOULD fit (the pane offers it as a button)
+        const blockBudget = Math.min(MAX_BLOCK_BUDGET, Math.max(MAX_BLOCKS, Number(numericMaxBlocks) || MAX_BLOCKS));
+        const blocksNeeded = gridBlockCount(bounds, cs);
+        if (blocksNeeded > blockBudget) {
+          const fit = cellToFit(bounds, blockBudget, cs);
+          const fitMax = cellToFit(bounds, MAX_BLOCK_BUDGET, cs);
+          setNumericBudgetHint?.({ needed: blocksNeeded, budget: blockBudget, cell: cs, fit, fitMax });
+          throw new Error(`At ${cs} m cells this extent needs ${blocksNeeded.toLocaleString()} blocks — over the ${blockBudget.toLocaleString()}-block budget. ${fit} m cells fit this budget${blockBudget < MAX_BLOCK_BUDGET ? `; with the largest budget (${MAX_BLOCK_BUDGET.toLocaleString()}) ${fitMax} m cells fit` : ""}. Change the cell size or the block budget in the Grade shell pane.`);
+        }
+        setNumericBudgetHint?.(null);
         const ac = new AbortController(); // TASKS.csv #520 — worker + status-bar progress and Cancel
         const grid = await runEstimation("dense", gridPoints, {
           bounds, cellSize: { dx: cs, dy: cs, dz: cs }, method: numericMethod,
           searchRadius: effectiveRadius, minSamples: 1, maxSamples: 16,
           minHoles: Math.max(1, numericMinHoles), // TASKS.csv #258
           support: true, // TASKS.csv #91/#92 — classify every grid node so the shell can be coloured by it
+          maxBlocks: blockBudget, // TASKS.csv #625
         }, { signal: ac.signal, onProgress: (f) => setTaskProgress?.({ label, pct: 20 + 60 * f, onCancel: () => ac.abort() }) });
         if (!grid.estimated) throw new Error(numericMinHoles > 1
           ? `No grid cell had samples from at least ${numericMinHoles} distinct holes within the search radius — widen the search, or lower "Min holes".`
@@ -1508,7 +1522,7 @@ export function useModelling(ctx) {
       setTaskProgress?.(null);
       setNumericBusy(false);
     }, 40);
-  }, [numericSymbol, assayElements, assays, collars, survey, numericCutoff, numericCellSize, numericSearchRadius, numericMethod, numericUseComposites, numericCompositeLength, numericMinCoverage, numericCloseShell, numericPadding, numericCapValue, numericMinHoles, numericIncludeQAQC, fitBox, setTaskProgress, anisotropy, domains, modelDomainId]); // anisotropy/domains/modelDomainId: TASKS.csv #273
+  }, [numericSymbol, assayElements, assays, collars, survey, numericCutoff, numericCellSize, numericMaxBlocks, numericSearchRadius, numericMethod, numericUseComposites, numericCompositeLength, numericMinCoverage, numericCloseShell, numericPadding, numericCapValue, numericMinHoles, numericIncludeQAQC, fitBox, setTaskProgress, anisotropy, domains, modelDomainId]); // anisotropy/domains/modelDomainId: TASKS.csv #273
 
   return { addStackUnit, computeIntercepts, faultCandidates, moveStackUnit, removeStackUnit, runAlterationModel, runImplicitModel, runNumericModel, runStackModel, runStructuralModel, runVeinModel };
 }

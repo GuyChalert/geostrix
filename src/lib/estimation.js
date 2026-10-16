@@ -13,7 +13,7 @@
 // button. NN/IDW are complete, defensible estimation methods in their own right (IDW in particular is
 // still routinely used for early-stage/scoping estimates), and TASKS.csv keeps a follow-up entry logged
 // for kriging as a separate, larger piece of work (needs its own variogram-modelling UI first).
-import { MAX_BLOCKS, SUPPORT_COLORS, ESTIMATION_METHODS } from "./estimationMeta.js"; // #552
+import { MAX_BLOCKS, MAX_BLOCK_BUDGET, SUPPORT_COLORS, ESTIMATION_METHODS } from "./estimationMeta.js"; // #552; budget: #625
 export { MAX_BLOCKS, SUPPORT_COLORS, ESTIMATION_METHODS };
 import { pointOnTrace } from "./desurvey.js";
 import { valueIn } from "./geochem.js";
@@ -141,14 +141,15 @@ export function estimateBlockModel(samplePoints, opts) {
 // so the two entry points can't drift apart: the numeric grade-shell tool must produce the SAME grade
 // at a given grid position that the block-model tool would, or the two would disagree about where a
 // cutoff envelope sits.
-function gridDims(bounds, cellSize) {
+function gridDims(bounds, cellSize, maxBlocks = MAX_BLOCKS) {
+  const limit = Math.min(MAX_BLOCK_BUDGET, Math.max(1, Number(maxBlocks) || MAX_BLOCKS)); // #625
   const dx = Math.max(0.01, cellSize.dx), dy = Math.max(0.01, cellSize.dy), dz = Math.max(0.01, cellSize.dz);
   const nx = Math.max(1, Math.round((bounds.xmax - bounds.xmin) / dx));
   const ny = Math.max(1, Math.round((bounds.ymax - bounds.ymin) / dy));
   const nz = Math.max(1, Math.round((bounds.zmax - bounds.zmin) / dz));
   const totalBlocks = nx * ny * nz;
-  if (totalBlocks > MAX_BLOCKS) {
-    throw new Error(`Block grid would be ${totalBlocks.toLocaleString()} blocks (${nx}×${ny}×${nz}) — over the ${MAX_BLOCKS.toLocaleString()}-block limit kept for a responsive in-app estimation pass. Use a larger cell size or a smaller extent.`);
+  if (totalBlocks > limit) {
+    throw new Error(`Block grid would be ${totalBlocks.toLocaleString()} blocks (${nx}×${ny}×${nz}) — over the ${limit.toLocaleString()}-block limit kept for a responsive in-app estimation pass. Use a larger cell size or a smaller extent.`);
   }
   return { dx, dy, dz, nx, ny, nz, totalBlocks };
 }
@@ -770,7 +771,7 @@ function settled(dists, safeD2, maxSamples, minSamples, minHoles, restrictToDoma
 // exactly where the equivalent block model's cutoff boundary would.
 export function estimateDenseGrid(samplePoints, opts) {
   const { bounds, cellSize, method = "idw2", searchRadius = null, minSamples = 1, maxSamples = 16, minHoles = 1, lengthWeight = true, restrictToDomain = false } = opts;
-  const { dx, dy, dz, nx, ny, nz, totalBlocks } = gridDims(bounds, cellSize);
+  const { dx, dy, dz, nx, ny, nz, totalBlocks } = gridDims(bounds, cellSize, opts.maxBlocks); // maxBlocks: #625
   const values = new Float64Array(totalBlocks).fill(NaN);
   const origin = { x: bounds.xmin + 0.5 * dx, y: bounds.ymin + 0.5 * dy, z: bounds.zmin + 0.5 * dz };
   const out = { nx, ny, nz, bounds, cellSize: { dx, dy, dz }, origin, values, estimated: 0, skipped: totalBlocks, singleHoleCells: 0 };

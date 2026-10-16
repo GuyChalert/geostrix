@@ -80,7 +80,7 @@ import { sceneVertsToWorldFlat } from "../lib/meshFlat.js"; // TASKS.csv #600 �
 import { useSculpt } from "../lib/useSculpt.js"; // TASKS.csv #145 — manual surface editing
 const SculptPanel = lazyModal(() => import("../components/SculptPanel.jsx")); // TASKS.csv #476 // TASKS.csv #145
 // TASKS.csv #142 — numeric (grade-shell) implicit model: composites/assays -> dense IDW grid -> marching cubes
-import { SUPPORT_COLORS, ESTIMATION_METHODS } from "../lib/estimationMeta.js"; // SUPPORT_*: TASKS.csv #91/#92
+import { SUPPORT_COLORS, ESTIMATION_METHODS, MAX_BLOCKS, BLOCK_BUDGETS } from "../lib/estimationMeta.js"; // SUPPORT_*: TASKS.csv #91/#92; budget: #625
 import { PRECIOUS_METALS } from "../lib/geochem.js";
 const PlannedHoleTargeting = lazyModal(() => import("../components/PlannedHoleTargeting.jsx")); // TASKS.csv #476 // TASKS.csv #119 - target solver + planned-vs-as-drilled
 import { solveOrientationToTarget, plannedTrace } from "../lib/holePlanning.js"; // TASKS.csv #119 - shared, Node-verified target math; plannedTrace: #524
@@ -1222,6 +1222,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   const [numericSymbol, setNumericSymbol] = useState("");
   const [numericCutoff, setNumericCutoff] = useState(1);
   const [numericCellSize, setNumericCellSize] = useState(10);
+  // TASKS.csv #625 — the grade shell's block budget (a per-computer preference: what this machine can afford), and the
+  // hint left by an over-budget run ({ needed, budget, cell, fit, fitMax })
+  const [numericMaxBlocks, setNumericMaxBlocksState] = useState(() => { try { return Number(localStorage.getItem("geostrix.gradeShellBlockBudget")) || MAX_BLOCKS; } catch { return MAX_BLOCKS; } });
+  const setNumericMaxBlocks = (v) => { setNumericMaxBlocksState(v); try { localStorage.setItem("geostrix.gradeShellBlockBudget", String(v)); } catch { /* private window */ } };
+  const [numericBudgetHint, setNumericBudgetHint] = useState(null);
   const [numericSearchRadius, setNumericSearchRadius] = useState(50);
   const [numericMethod, setNumericMethod] = useState("idw2");
   const [numericUseComposites, setNumericUseComposites] = useState(true);
@@ -3414,6 +3419,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     modelResolution,
     numericCapValue,
     numericCellSize,
+    numericMaxBlocks, setNumericBudgetHint, // TASKS.csv #625
     numericCloseShell,
     numericCompositeLength,
     numericCutoff,
@@ -7699,8 +7705,8 @@ export default function ViewerModule({ mode = "view", visible = true }) {
                 </label>
               </div>
               <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                <label style={{ ...miniField }} title="Interpolation grid cell size (cubic). Smaller = smoother shell but more cells; capped by the same block limit as grade estimation.">Cell (m)
-                  <input type="number" min="0.5" step="any" value={numericCellSize} onChange={(e) => setNumericCellSize(Math.max(0.5, Number(e.target.value) || 10))} style={{ ...smallSel, width: "100%" }} />
+                <label style={{ ...miniField }} title="Interpolation grid cell size (cubic). Smaller = smoother shell but more cells, within the block budget below.">Cell (m)
+                  <input type="number" min="0.5" step="any" value={numericCellSize} onChange={(e) => { setNumericCellSize(Math.max(0.5, Number(e.target.value) || 10)); setNumericBudgetHint(null); }} style={{ ...smallSel, width: "100%" }} />
                 </label>
                 {/* TASKS.csv #292 — "0 = unlimited" actively invited the pathological setting: an
                     unbounded search made every sample a candidate for every cell (measured: 81 s of
@@ -7773,6 +7779,28 @@ export default function ViewerModule({ mode = "view", visible = true }) {
                   Part of this shell's boundary will not be a grade boundary — it is where the search
                   radius ran out of samples. Its volume will depend on your search radius, not only on
                   the data.
+                </div>
+              )}
+              {/* TASKS.csv #625 — the block budget (grid cells the shell may use). Runs in a background worker with
+                  progress and Cancel; measured ~18 s per million blocks on a mid-range laptop. */}
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)", marginBottom: 6 }}
+                title="How many grid cells the grade shell may use. Bigger budgets allow smaller cells over a large area, at the cost of time and memory (the run stays cancellable from the status bar). Remembered on this computer.">
+                <span style={{ flexShrink: 0 }}>Block budget</span>
+                <select value={numericMaxBlocks} onChange={(e) => { setNumericMaxBlocks(Number(e.target.value)); setNumericBudgetHint(null); }} style={{ ...smallSel, flex: 1, minWidth: 0 }} aria-label="Grade shell block budget">
+                  {BLOCK_BUDGETS.map((b) => <option key={b} value={b}>{b.toLocaleString()} blocks{b === MAX_BLOCKS ? " (fast)" : b >= 5000000 ? " (~2 min, ~70 MB)" : b >= 2000000 ? " (~40 s)" : " (~20 s)"}</option>)}
+                </select>
+              </label>
+              {numericBudgetHint && (
+                <div role="status" style={{ fontSize: "var(--font-size-xs)", color: "var(--color-warn-text)", background: "var(--color-warn-bg)", border: "1px solid var(--color-warn-border)", borderRadius: 5, padding: "6px 7px", marginBottom: 8, lineHeight: 1.45 }}>
+                  At {numericBudgetHint.cell} m cells this extent needs {numericBudgetHint.needed.toLocaleString()} blocks — over the {numericBudgetHint.budget.toLocaleString()}-block budget.
+                  <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => { setNumericCellSize(numericBudgetHint.fit); setNumericBudgetHint(null); }} style={{ ...smallSel, cursor: "pointer" }}>Use {numericBudgetHint.fit} m cells</button>
+                    {numericBudgetHint.budget < BLOCK_BUDGETS[BLOCK_BUDGETS.length - 1] && (
+                      <button type="button" onClick={() => { setNumericMaxBlocks(BLOCK_BUDGETS[BLOCK_BUDGETS.length - 1]); setNumericCellSize(numericBudgetHint.fitMax); setNumericBudgetHint(null); }} style={{ ...smallSel, cursor: "pointer" }}>
+                        Largest budget + {numericBudgetHint.fitMax} m cells
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               {/* TASKS.csv #292 — warn before the work, not after (pattern from #209). */}
