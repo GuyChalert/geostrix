@@ -45,6 +45,9 @@ header.site nav a:hover { color: #fff; }
 .btn.ghost { color: #fff; border: 1px solid rgba(255, 255, 255, 0.35); margin-left: 10px; }
 .btn.ghost:hover { border-color: #fff; color: #fff; }
 .dl-note { font-size: 14px; color: #b8c2cc; margin-top: 12px; }
+.muted, .dl-note.muted { color: var(--muted); }
+.small { font-size: 15px; }
+.mid { font-size: 16px; }
 
 /* sections */
 section { padding: 64px 0; }
