@@ -18,6 +18,7 @@ import {
   oxideOfHeader, fromOxideHeader, // TASKS.csv #403
 } from "../lib/geochem.js";
 import { mapInChunks } from "../lib/mapInChunks.js"; // TASKS.csv #583
+import { detectLongAssay, pivotLongAssays, longAssayNote } from "../lib/longAssays.js"; // TASKS.csv #623
 import GeochemPlot from "../components/GeochemPlot.jsx";
 import { lithologyBySample, lithologyCounts, NOT_LOGGED } from "../lib/sampleLithology.js"; // TASKS.csv #619
 import AssayImportModal from "../components/AssayImportModal.jsx";
@@ -151,6 +152,14 @@ export default function GeochemModule() {
         if (!data.length) { setNotices((p) => [...p, `${file.name}: empty file.`]); return; }
         if (note) setNotices((p) => [...p, `${file.name}:${note}`]);
         const headers = t.headers; // #611 — a columnar row has no own keys (was Object.keys(data[0]))
+        // TASKS.csv #623 — a long export (analyte + concentration / value + units + method + flag, one row per element)
+        // becomes one row per sample with an element column each, then goes through the normal wide import
+        const pv = detectLongAssay(headers) ? pivotLongAssays(data, headers, (sym) => inferUnit(sym, sym), (a) => isElementColumn(a)) : null;
+        if (pv && pv.rows.length) {
+          setNotices((p) => [...p, `${file.name}: ${longAssayNote(pv.report)}`]);
+          openAssayModal(file, pv.headers, pv.rows, isPxrf);
+          return;
+        }
         openAssayModal(file, headers, data, isPxrf);
     });
   };
@@ -310,7 +319,7 @@ export default function GeochemModule() {
     // TASKS.csv #400 — keep a QC-type and a sample-id column when the file has them (acQuire / MX exports
     // mark standards / blanks / duplicates there, under the real hole_id). Auto-detected by header name.
     const findCol = (names) => (modal.headers || []).find((h) => names.includes(String(h).trim().toLowerCase().replace(/[\s-]+/g, "_"))) || null;
-    const typeCol = findCol(["sample_type", "sampletype", "qc_type", "qctype", "qaqc_type", "qaqc", "sample_class", "sample_category", "type"]);
+    const typeCol = findCol(["sample_type", "samp_type", "sampletype", "qc_type", "qctype", "qaqc_type", "qaqc", "sample_class", "sample_category", "type"]);
     const idCol = findCol(["sample_id", "sampleid", "sample_no", "sample_number", "sample"]);
     // #400 — the original a duplicate was split from, and which CRM a standard is
     const parentCol = findCol(["parent_id", "parent", "parent_sample", "parent_sample_id", "original_id", "orig_sample_id", "primary_id", "original_sample"]);
