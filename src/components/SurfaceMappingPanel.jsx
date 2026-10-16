@@ -12,7 +12,7 @@ import Papa from "papaparse";
 import { Eye, EyeOff, Trash2, Map as MapIcon, Compass, ChevronDown, ChevronRight, Palette } from "./icons.js";
 import { useStore } from "../lib/store.jsx";
 import InfoButton from "./InfoButton.jsx";
-import { parseShapefileZip, parseShapefileParts } from "../lib/shapefile.js";
+import { parseShapefileZip, parseShapefileParts, listZipNames, readZipEntries } from "../lib/shapefile.js";
 import { parseGeoPackage } from "../lib/gpkg.js";
 import { guessEpsgFromPrjWkt, reprojectXY, getProj4DefSync, crsName, pointTransform, turnGridBearing, bearingTurn } from "../lib/reproject.js";
 import { buildLayer, findField, autoColorFor } from "../lib/mapLayerBuild.js"; // TASKS.csv #609 — shared with the 3D-view drop
@@ -76,10 +76,23 @@ export default function SurfaceMappingPanel({ pBtn, numInput, part = null }) { /
           if (!usable.length) throw new Error("no feature tables with geometry");
           usable.forEach((l) => addParsed(l, base(f)));
         } else if (n.endsWith(".zip")) {
-          const first = await parseShapefileZip(await f.arrayBuffer());
+          // TASKS.csv #627 — a zipped GeoPackage (no .shp inside): unpack only the .gpkg file(s) and read them as above
+          const zbuf = await f.arrayBuffer();
+          const zipNames = await listZipNames(zbuf);
+          const gpkgs = zipNames.filter((x) => /\.gpkg$/i.test(x));
+          if (gpkgs.length && !zipNames.some((x) => /\.shp$/i.test(x))) {
+            for (const g of gpkgs) {
+              const { layers } = await parseGeoPackage((await readZipEntries(zbuf, { test: (x) => x === g }))[g]);
+              const usable = layers.filter((l) => l.features.length);
+              if (!usable.length) throw new Error(`no feature tables with geometry in ${g}`);
+              usable.forEach((l) => addParsed(l, base(f)));
+            }
+            continue;
+          }
+          const first = await parseShapefileZip(zbuf);
           const names = first.layerNames || [first.layerName];
           for (const ln of names) {
-            const p = ln === first.layerName ? first : await parseShapefileZip(await f.arrayBuffer(), ln);
+            const p = ln === first.layerName ? first : await parseShapefileZip(zbuf, ln);
             addParsed({ ...p, name: names.length > 1 ? ln : null, epsg: guessEpsgFromPrjWkt(p.prjWkt) }, base(f));
           }
         }

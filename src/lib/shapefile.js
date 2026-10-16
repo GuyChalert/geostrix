@@ -594,14 +594,22 @@ function parseDbf(dbfBytes, encoding = "windows-1252") {
 // real names, so they're returned as `layerNames` and `layerName` (which one this call actually read),
 // and `wantLayer` lets the caller ask for one of them by name. `otherBaseNames` is kept exactly as it
 // was so nothing that already reads it changes behavior.
+// TASKS.csv #627 — the zip's names are listed first and ONLY the chosen layer's files are decompressed. It used to
+// inflate every .shp/.dbf in the archive to import one of them, so a province-wide bundle (BC Surficial Geology:
+// many layers, over 1 GB unpacked) hit the whole-archive ceiling part-way through and failed with "expands to more
+// than 7 MB" — the 7 MB being what was left of the 1 GB allowance — and was slow and memory-hungry even when it fit.
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export async function listZipNames(zipBytes) {
+  return Object.keys(await readZipEntries(zipBytes, /(?!)/)); // central directory only — nothing decompressed
+}
 export async function parseShapefileZip(zipBytes, wantLayer = null) {
-  const entries = await readZipEntries(zipBytes);
-  const shpNames = Object.keys(entries).filter((n) => /\.shp$/i.test(n));
+  const shpNames = (await listZipNames(zipBytes)).filter((n) => /\.shp$/i.test(n));
   if (!shpNames.length) throw new Error("No .shp file found inside this .zip.");
   const baseNames = Array.from(new Set(shpNames.map((n) => n.replace(/\.shp$/i, ""))));
   // An unknown/stale requested name falls back to the first layer rather than throwing — the caller's
   // picker is built from `layerNames`, so this only happens if the two ever get out of sync.
   const base = (wantLayer && baseNames.includes(wantLayer)) ? wantLayer : baseNames[0];
+  const entries = await readZipEntries(zipBytes, new RegExp(`^${escapeRe(base)}\\.(shp|dbf|prj|cpg)$`, "i"));
   // TASKS.csv #223 — the .prj sidecar (if the zip bundles one) was previously ignored entirely. Text-
   // decode it and hand it along so the caller can run it through reproject.js's guessEpsgFromPrjWkt.
   const prjBytes = entries[`${base}.prj`];

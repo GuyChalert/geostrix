@@ -183,8 +183,28 @@ async function readLooseShapefile(file) {
   }, 0, parts.prj ? await parts.prj.text() : null);
 }
 
+// TASKS.csv #627 — a .zip holding a GeoPackage and no shapefile (e.g. BC's "BCSurficialGeology_geopackage.zip"):
+// only that .gpkg is unpacked, as a File, and goes through the normal GeoPackage path. null when it isn't one.
+async function gpkgInsideZip(file) {
+  const buf = await file.arrayBuffer();
+  const { listZipNames, readZipEntries } = await loadShapefile();
+  const names = await listZipNames(buf);
+  const gpkgs = names.filter((n) => /\.gpkg$/i.test(n));
+  if (!gpkgs.length || names.some((n) => /\.shp$/i.test(n))) return null;
+  const entries = await readZipEntries(buf, { test: (n) => n === gpkgs[0] });
+  return { file: new File([entries[gpkgs[0]]], gpkgs[0].split("/").pop()), inner: gpkgs[0], count: gpkgs.length };
+}
+
 export function parseVectorFile(file, onDone, chosenLayer = null) {
   const name = file.name.toLowerCase();
+  if (name.endsWith(".zip") && !file.zipChecked) {
+    gpkgInsideZip(file).then((z) => {
+      if (!z) { file.zipChecked = true; parseVectorFile(file, onDone, chosenLayer); return; }
+      const also = ` Read ${z.inner} from inside ${file.name}${z.count > 1 ? ` (the first of ${z.count} GeoPackages in it — unzip it to open another)` : ""}.`;
+      parseVectorFile(z.file, (rows, err, meta) => onDone(rows, err, meta && rows ? { ...meta, note: `${meta.note || ""}${also}` } : meta), chosenLayer);
+    }).catch((err) => onDone(null, err.message));
+    return;
+  }
   // TASKS.csv #492 — a LAS downhole log: one table (hole_id, depth, one column per curve) for the normal dialog
   if (name.endsWith(".las")) {
     Promise.all([file.text(), loadLas()]).then(([text, { parseLAS }]) => {
