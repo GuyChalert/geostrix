@@ -77,7 +77,7 @@ export function useImportPipeline(ctx) {
     const layer = buildLayer({ ...parsed, epsg: guessEpsgFromPrjWkt(parsed.prjWkt) }, { sourceName, projectEpsg: live.project?.epsg, qml: null, sourceOverride: null });
     if (!layer) { setNotices((p) => [...p, `${file.name}: no usable line / polygon features.`]); return; }
     live.addMapLayer({ ...layer, drapeMode: live.terrain ? "terrain" : "flat" });
-    setNotices((p) => [...p, `${file.name}: ${layer.features.length} ${layer.geomType}${layer.features.length === 1 ? "" : "s"} added to Map layers (Geophysics tab), ${layer.crsNote}${live.terrain ? ", draped on the terrain" : ""}. Lines and polygons are map data, not drillhole tables.`]);
+    setNotices((p) => [...p, `${file.name}: ${layer.features.length} ${layer.geomType}${layer.features.length === 1 ? "" : "s"} added to Map layers (left panel; remove or hide it there), ${layer.crsNote}${live.terrain ? ", draped on the terrain" : ""}. Lines and polygons are map data, not drillhole tables.`]);
   };
   const isMapGeometry = (meta) => meta?.vector && meta.vector.geomType && meta.vector.geomType !== "point";
 

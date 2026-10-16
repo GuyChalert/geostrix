@@ -662,6 +662,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     rasters, addRaster, updateRaster, removeRaster,
     boundaries, addBoundary, updateBoundary, removeBoundary,
     mapLayers, surfaceStructures, // TASKS.csv #316/#317
+    updateMapLayer, removeMapLayer, // TASKS.csv #628 — the Map layers list in this sidebar
     fieldStructuralRefs, addFieldRef, removeFieldRef,
     lithoGroups, addLithoGroup, updateLithoGroup, removeLithoGroup,
     modellingCodes, setModellingCodes, // TASKS.csv #599
@@ -6942,6 +6943,24 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         ))}
         <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => fileInputs.current.customCsv.click()} style={{ cursor: "pointer", padding: "8px 10px", background: "var(--color-bg-subtle)", border: "1px dashed var(--color-border-light)", borderRadius: 6, fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)", textAlign: "center" }}>+ Add CSV layer</div>
         <input ref={setInputRef("customCsv")} type="file" multiple accept=".csv,.xlsx,.zip,.gpkg,.shp,.dbf,.prj,.cpg,.shx,.kml,.kmz,.las" style={{ display: "none" }} onChange={(e) => { const f = groupShapefileParts(Array.from(e.target.files)).files[0]; if (f) openImportModal(f, "custom"); e.target.value = ""; }} />
+
+        {/* TASKS.csv #628 — Matt: "I'm importing shp files but there is no way to delete them … I wanna be able to see
+            them as layers, just like in qgis". Line / polygon shapefiles and GeoPackage tables go to the project's map
+            layers (#609), which were only listed under Geophysics -> Map layers; this lists them here too, QGIS-style:
+            show/hide, zoom to, remove. Styling stays in the Geophysics panel (one place for it). */}
+        <div className="ge-section-label" style={{ marginTop: 16 }}>Map layers{mapLayers.length ? ` (${mapLayers.length})` : ""}</div>
+        {mapLayers.map((l) => (
+          <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+            <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateMapLayer(l.id, { visible: l.visible === false })} title={`${l.visible === false ? "Show" : "Hide"} "${l.name}"${l.crsNote ? `\n${l.crsNote}` : ""}`} style={{ cursor: "pointer", flex: 1, fontSize: "var(--font-size-base)", color: l.visible === false ? "var(--color-text-disabled)" : "var(--color-text)", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              {l.visible === false ? <EyeOff size={14} /> : <Eye size={14} />} <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span> <span style={{ color: "var(--color-text-muted)", fontSize: "var(--font-size-xs)", flexShrink: 0 }}>({l.features.length} {l.geomType})</span>
+            </div>
+            <Maximize2 size={12} style={{ cursor: "pointer", color: "var(--color-text-secondary)", flexShrink: 0 }} {...iconAction(() => { const m = mapLayerMeshesRef.current[l.id]; if (m) fitBox(new THREE.Box3().setFromObject(m)); }, `Zoom to map layer "${l.name}"`)} />
+            <Trash2 size={14} style={{ cursor: "pointer", color: "var(--color-danger-icon)", flexShrink: 0 }} {...iconAction(() => { if (confirmDestructive(`Remove the map layer "${l.name}" from the project?`)) removeMapLayer(l.id); }, `Remove map layer "${l.name}"`)} />
+          </div>
+        ))}
+        <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => fileInputs.current.mapLayer.click()} style={{ cursor: "pointer", padding: "8px 10px", background: "var(--color-bg-subtle)", border: "1px dashed var(--color-border-light)", borderRadius: 6, fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)", textAlign: "center" }}>+ Add map layer (.shp / .zip / .gpkg)</div>
+        <input ref={setInputRef("mapLayer")} type="file" multiple accept=".zip,.gpkg,.shp,.dbf,.prj,.cpg,.shx" style={{ display: "none" }} onChange={(e) => { groupShapefileParts(Array.from(e.target.files)).files.forEach((f) => openImportModal(f)); e.target.value = ""; }} />
+        {mapLayers.length > 0 && <div style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", margin: "2px 2px 0" }}>Colours, labels and draping: Geophysics → Map layers.</div>}
 
         {/* TASKS.csv #155 — Snapshot to Layout / Draw cross-section (+ its buffer setting) moved to
             the toolbar above (Camera / Scissors icons) — same reasoning as Grid/Themes above. The
