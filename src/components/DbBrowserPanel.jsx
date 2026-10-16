@@ -1,7 +1,7 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useRef, useState, useEffect } from "react";
 import { selectSql, countSql, chunkedReadPlan } from "../lib/dbSql.js"; // TASKS.csv #349
 import { ChevronRight, ChevronDown, Folder, FolderOpen, File, HardDrive, Star, Database, Loader2, Unplug, RefreshCw, AlertTriangle } from "./icons.js";
-import { fsListDir, fsListDrives, fsReadFile, readResultToFile, dbLiveListTables, dbLiveQuery } from "../lib/desktop.js";
+import { fsListDir, fsListDrives, fsReadFile, readResultToFile, dbLiveListTables, dbLiveQuery, dbPasswordStatus } from "../lib/desktop.js";
 import { useStore, useSetTaskProgress } from "../lib/store.jsx";
 import { useBrowserPanelPrefs } from "../lib/useBrowserPanelPrefs.js";
 import { activateOnKey } from "../lib/a11y.js"; // TASKS.csv #238 — Enter/Space on clickable non-button elements
@@ -169,6 +169,8 @@ function FsTreeNode({ entry, depth, isDrive, isFavorite, favorites, onToggleFavo
 function PgTreeNode({ profile, live, connectDb, disconnectDb, onImportRows }) {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
+  const [pwSaved, setPwSaved] = useState(false); // TASKS.csv #621 — a password remembered for this login
+  useEffect(() => { let on = true; dbPasswordStatus(profile).then((r) => { if (on) setPwSaved(!!r?.saved); }); return () => { on = false; }; }, [profile]);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState(null);
   const [tables, setTables] = useState(null);
@@ -306,7 +308,7 @@ function PgTreeNode({ profile, live, connectDb, disconnectDb, onImportRows }) {
         <div style={{ paddingLeft: 18 }}>
           {!live && (
             <div style={{ display: "flex", gap: 4, marginBottom: 6, alignItems: "center" }}>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" style={pwInp}
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={pwSaved ? "Saved — just Connect" : "Password"} style={pwInp} aria-label={`Password for ${profile.name}`}
                 onKeyDown={(e) => { if (e.key === "Enter") doConnect(); }} />
               <button onClick={doConnect} disabled={connecting} style={connectBtn}>{connecting ? <Loader2 size={12} className="spin" /> : "Connect"}</button>
             </div>

@@ -22,6 +22,18 @@ const route = window.location.hash.replace(/^#/, "").split("?")[0];
 // (Chromium's default for an unhandled drop is to OPEN the file — in Electron that meant the app window
 // became file://<the dropped file>). Runs in the bubbling phase, after every module's own onDrop.
 window.addEventListener("dragover", (e) => e.preventDefault());
+
+// TASKS.csv #622 — after a native alert / confirm / prompt, Electron on Windows leaves the page without focus
+// (clicks stop reaching text boxes); every such dialog in the app goes through these, so the window is
+// re-activated right after each one closes. No-op in a plain browser.
+if (window.desktop?.refocusAfterDialog) {
+  for (const name of ["alert", "confirm", "prompt"]) {
+    const native = window[name].bind(window);
+    window[name] = (...args) => {
+      try { return native(...args); } finally { window.desktop.refocusAfterDialog(); }
+    };
+  }
+}
 window.addEventListener("drop", (e) => e.preventDefault());
 
 const root = createRoot(document.getElementById("root"));

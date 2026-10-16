@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld("desktop", {
   updaterInstall: () => ipcRenderer.invoke("updater-install"),
   onUpdaterEvent: (cb) => { const h = (_e, d) => cb(d); ipcRenderer.on("updater-event", h); return () => ipcRenderer.removeListener("updater-event", h); },
   dbConnect: (config) => ipcRenderer.invoke("db-connect", config),
+  refocusAfterDialog: () => ipcRenderer.send("refocus-after-dialog"), // TASKS.csv #622
+  dbPasswordStatus: (config) => ipcRenderer.invoke("db-password-status", config), // TASKS.csv #621
+  dbForgetPassword: (config) => ipcRenderer.invoke("db-forget-password", config), // TASKS.csv #621
   dbDisconnect: (id) => ipcRenderer.invoke("db-disconnect", { id }),
   dbLiveQuery: (id, sql) => ipcRenderer.invoke("db-live-query", { id, sql }),
   dbLiveListTables: (id) => ipcRenderer.invoke("db-live-list-tables", { id }),

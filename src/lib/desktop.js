@@ -175,6 +175,16 @@ export async function dbConnect(config) {
   if (!d) return { ok: false, error: "Database connections require the desktop app." };
   return d.dbConnect(config);
 }
+// TASKS.csv #621 — whether a password is remembered (encrypted by the OS, desktop only) for this login, and
+// forgetting it. The password itself never comes back to the renderer.
+export async function dbPasswordStatus(config) {
+  if (!d?.dbPasswordStatus) return { saved: false, available: false };
+  return d.dbPasswordStatus(config);
+}
+export async function dbForgetPassword(config) {
+  if (!d?.dbForgetPassword) return { ok: true, forgotten: false };
+  return d.dbForgetPassword(config);
+}
 export async function dbDisconnect(id) {
   if (!d) return { ok: false, error: "Database connections require the desktop app." };
   return d.dbDisconnect(id);

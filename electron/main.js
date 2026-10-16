@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, protocol, clipboard } = require("electron"); // session: TASKS.csv #300; shell: TASKS.csv #310; protocol: #562
+const { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, protocol, clipboard, safeStorage } = require("electron"); // session: TASKS.csv #300; shell: TASKS.csv #310; protocol: #562
 // User-reported bug: "there's a bug on the app that won't let me close it. I can only close it ending
 // the task" — App.jsx's beforeunload handler correctly calls e.preventDefault() when a tab has unsaved
 // changes (the standard web pattern, meant to trigger a native "leave site?" confirm), but Electron
@@ -432,6 +432,17 @@ function createMainWindow() {
 }
 
 ipcMain.on("set-dirty-state", (_e, dirty) => { rendererDirty = !!dirty; });
+// TASKS.csv #622 — Electron on Windows: after a native alert() / confirm() / prompt() closes, the window is in
+// front again but its page has lost focus (document.hasFocus() false, measured), so clicks no longer put the
+// cursor in text boxes ("I can't click on the in-app window after using it once"). Re-activating the window
+// restores it. The renderer calls this right after every such dialog (src/main.jsx).
+ipcMain.on("refocus-after-dialog", (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w || w.isDestroyed()) return;
+  w.blur();
+  w.focus();
+  e.sender.focus();
+});
 
 // ---------- cross-section pop-out window ----------
 // TASKS.csv #617 — the section window's renderer (lazy SectionWindow chunk) starts listening for "section-data"
@@ -660,7 +671,10 @@ ipcMain.handle("autosave-clear", async () => {
 // context) is the kind of thing a non-Node-developer geologist has no way to act on. Always keeps the
 // original err.message too, never replaces it — the hint is additive, not a guess presented as fact.
 function friendlyDbError(err, config) {
-  const raw = err.message || String(err);
+  // TASKS.csv #621 — "localhost" tries IPv6 and IPv4; when both fail Node throws an AggregateError whose own
+  // message is empty, so the user saw just "AggregateError". Use the inner errors' codes / messages.
+  const inner = Array.isArray(err?.errors) && err.errors.length ? err.errors : null;
+  const raw = inner ? inner.map((e) => e.message || e.code || String(e)).filter((m, i, a) => a.indexOf(m) === i).join("; ") : (err.message || String(err));
   if (/ECONNREFUSED/.test(raw)) {
     const engineLabel = config.engine === "mysql" ? "MySQL/MariaDB" : "Postgres";
     return `${raw} — nothing is accepting connections at ${config.host}:${config.port}. Double check the host/port match what DBeaver uses for this same connection, and that ${engineLabel} is actually running and reachable from this machine (a local firewall or VPN can block this even when DBeaver on the same network works).`;
@@ -673,6 +687,13 @@ function friendlyDbError(err, config) {
   }
   if (/password authentication failed|28P01|ER_ACCESS_DENIED_ERROR|Access denied for user/.test(raw)) {
     return `${raw} — connected to the server fine, but the username/password was rejected. Double check both against the same credentials DBeaver uses for this connection.`;
+  }
+  // TASKS.csv #621 (Matt, treaty_creek via Conntiki) — the server only lets this address in over SSL
+  if (/no pg_hba\.conf entry/.test(raw) && /no encryption/.test(raw)) {
+    return `${raw} — the server only accepts ENCRYPTED connections from this computer. Tick "Use SSL"; if it then complains about the certificate (common through a tunnel to localhost, or with a self-signed certificate), also tick "Trust a self-signed / unverified certificate".`;
+  }
+  if (/no pg_hba\.conf entry/.test(raw)) {
+    return `${raw} — the server's access rules (pg_hba.conf) don't allow this user / database from this computer's address. Ask the database administrator to allow it, or check the user and database names against DBeaver's.`;
   }
   if (/ER_BAD_DB_ERROR|Unknown database/.test(raw)) {
     return `${raw} — connected to the server, but database "${config.database}" doesn't exist there (or this user can't see it). Check the database name against what DBeaver uses for this connection.`;
@@ -736,6 +757,9 @@ ipcMain.handle("fetch-web-layer", async (_e, { url } = {}) => {
 });
 
 const { DB_STATEMENT_TIMEOUT_MS, pgConfig, mysqlConfig } = require("./dbConfig.js"); // TASKS.csv #348
+const { createDbCredentialStore } = require("./dbCredentials.js"); // TASKS.csv #621
+let dbCredStore = null;
+const dbCreds = () => (dbCredStore ||= createDbCredentialStore({ safeStorage, dir: app.getPath("userData") }));
 function testConnectionQuery(config) {
   return config.engine === "mysql"
     ? "SELECT DATABASE() as db, CURRENT_USER() as usr, VERSION() as ver"
@@ -803,9 +827,16 @@ let liveDbConnCounter = 0;
 
 ipcMain.handle("db-connect", async (_e, config) => {
   let db;
+  // TASKS.csv #621 — an empty password box uses the one remembered for exactly this login (if any); a typed
+  // password always wins. The saved one never goes back to the renderer.
+  const typed = !!config.password;
+  let usedSaved = false;
+  if (!typed) { const saved = dbCreds().get(config); if (saved) { config = { ...config, password: saved }; usedSaved = true; } }
   try {
     db = await makeDbClient(config);
     const res = await db.query(testConnectionQuery(config));
+    let passwordSaved = dbCreds().has(config);
+    if (config.rememberPassword && typed) passwordSaved = dbCreds().set(config, config.password) || passwordSaved;
     const id = `dbconn_${++liveDbConnCounter}_${Date.now()}`;
     const { password, ...safeConfig } = config;
     liveDbConnections.set(id, { client: db, safeConfig, connectedAt: Date.now() });
@@ -815,12 +846,17 @@ ipcMain.handle("db-connect", async (_e, config) => {
       // every subsequent query against a dead client.
       if (liveDbConnections.get(id)?.client === db) liveDbConnections.delete(id);
     });
-    return { ok: true, id, info: res.rows[0], config: safeConfig };
+    return { ok: true, id, info: res.rows[0], config: safeConfig, passwordSaved, usedSavedPassword: usedSaved };
   } catch (err) {
     if (db) try { await db.end(); } catch (_) {}
-    return { ok: false, error: friendlyDbError(err, config) };
+    const msg = friendlyDbError(err, config);
+    return { ok: false, error: usedSaved ? `${msg} (This used the password saved on this computer — if it changed, type the new one.)` : msg };
   }
 });
+
+// TASKS.csv #621 — whether a password is remembered for this login (never the password itself), and forgetting it
+ipcMain.handle("db-password-status", (_e, config) => ({ saved: dbCreds().has(config || {}), available: dbCreds().available() }));
+ipcMain.handle("db-forget-password", (_e, config) => ({ ok: true, forgotten: dbCreds().forget(config || {}) }));
 
 ipcMain.handle("db-disconnect", async (_e, { id }) => {
   const entry = liveDbConnections.get(id);
