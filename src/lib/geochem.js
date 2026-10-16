@@ -264,11 +264,66 @@ export function mergeAssayRows(prev, incoming) {
     Object.keys(r.values || {}).forEach((sym) => { delete quals[sym]; });
     Object.assign(quals, r.qualifiers || {});
     const next = { ...old, ...r, values: { ...(old.values || {}), ...(r.values || {}) } };
+    const files = unionSrcFiles(old.srcFile, r.srcFile); // #624 — a merged interval came from both files
+    if (files) next.srcFile = files; else delete next.srcFile;
     if (Object.keys(quals).length) next.qualifiers = quals; else delete next.qualifiers;
     out[i] = next;
     merged++;
   });
   return { rows: out, merged, added, repeatedInFile };
+}
+
+// TASKS.csv #624 — which imported file(s) an assay interval came from, so a file can be removed again ("currently
+// there is no way to deleted imported assays"). srcFile is the file name, or several joined by a newline when a later
+// file merged into the same interval (a file name never contains a newline). Rows from before this have none.
+const SRC_SEP = "\n";
+export const srcFilesOf = (r) => (r?.srcFile ? String(r.srcFile).split(SRC_SEP) : []);
+export function unionSrcFiles(a, b) {
+  const set = [...new Set([...(a ? String(a).split(SRC_SEP) : []), ...(b ? String(b).split(SRC_SEP) : [])])];
+  return set.length ? set.join(SRC_SEP) : null;
+}
+// [{ file (null = imported before files were tracked), intervals, shared (also from another file) }], largest first
+export function assayFileSummary(assays) {
+  const m = new Map();
+  (assays || []).forEach((r) => {
+    const files = srcFilesOf(r);
+    if (!files.length) { const e = m.get(null) || { file: null, intervals: 0, shared: 0 }; e.intervals++; m.set(null, e); return; }
+    files.forEach((f) => { const e = m.get(f) || { file: f, intervals: 0, shared: 0 }; e.intervals++; if (files.length > 1) e.shared++; m.set(f, e); });
+  });
+  return [...m.values()].sort((x, y) => y.intervals - x.intervals);
+}
+// remove one file's intervals. Intervals that ALSO came from another file are kept (their values can't be separated)
+// and lose this file's name; file = null removes the untracked (older) rows.
+export function removeAssayFile(assays, file) {
+  let removed = 0, keptShared = 0;
+  const out = [];
+  (assays || []).forEach((r) => {
+    const files = srcFilesOf(r);
+    if (file == null ? files.length === 0 : files.length === 1 && files[0] === file) { removed++; return; }
+    if (file != null && files.length > 1 && files.includes(file)) {
+      keptShared++;
+      out.push({ ...r, srcFile: files.filter((f) => f !== file).join(SRC_SEP) });
+      return;
+    }
+    out.push(r);
+  });
+  return { assays: out, removed, keptShared };
+}
+// remove one element everywhere; intervals left with no element at all are removed too
+export function removeAssayElement(assays, symbol) {
+  let cleared = 0, emptied = 0;
+  const out = [];
+  (assays || []).forEach((r) => {
+    if (!r.values || !(symbol in r.values)) { out.push(r); return; }
+    cleared++;
+    const values = { ...r.values }; delete values[symbol];
+    const next = { ...r, values };
+    if (r.qualifiers && symbol in r.qualifiers) { const q = { ...r.qualifiers }; delete q[symbol]; if (Object.keys(q).length) next.qualifiers = q; else delete next.qualifiers; }
+    if (r.valueSources && symbol in r.valueSources) { const v = { ...r.valueSources }; delete v[symbol]; if (Object.keys(v).length) next.valueSources = v; else delete next.valueSources; }
+    if (!Object.keys(values).length) { emptied++; return; }
+    out.push(next);
+  });
+  return { assays: out, cleared, emptied };
 }
 
 // element wt% -> oxide wt%

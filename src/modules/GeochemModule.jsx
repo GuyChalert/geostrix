@@ -8,7 +8,7 @@ import { askAdoptCrs } from "../lib/adoptCrs.js"; // TASKS.csv #607
 import { Ribbon, RibbonGroup, RibbonButton } from "../components/Ribbon.jsx"; // TASKS.csv #458
 import { MapPin as GMapPin, Triangle as GTriangle, Shapes as GShapes, BarChart3 as GBarChart, Award as GAward, Rows3 as GRows, Sheet as GSheet, Image as GImage } from "../components/icons.js";
 import Papa from "papaparse";
-import { Upload, Download, FlaskConical, Beaker, Scale, Grid3x3, ShieldCheck, TerminalSquare, Sigma, FileCheck } from "../components/icons.js";
+import { Upload, Download, FlaskConical, Beaker, Scale, Grid3x3, ShieldCheck, TerminalSquare, Sigma, FileCheck, X } from "../components/icons.js";
 import { addCalculatedElement, CALC_PRESETS } from "../lib/calcElement.js"; // TASKS.csv #401
 import { useStore } from "../lib/store.jsx";
 import { saveFile, loadSampleFiles } from "../lib/desktop.js"; // loadSampleFiles: TASKS.csv #391
@@ -19,6 +19,8 @@ import {
 } from "../lib/geochem.js";
 import { mapInChunks } from "../lib/mapInChunks.js"; // TASKS.csv #583
 import { detectLongAssay, pivotLongAssays, longAssayNote } from "../lib/longAssays.js"; // TASKS.csv #623
+import { assayFileSummary, removeAssayFile, removeAssayElement } from "../lib/geochem.js"; // TASKS.csv #624
+import { confirmDestructive } from "../lib/confirmDestructive.js"; // TASKS.csv #624
 import GeochemPlot from "../components/GeochemPlot.jsx";
 import { lithologyBySample, lithologyCounts, NOT_LOGGED } from "../lib/sampleLithology.js"; // TASKS.csv #619
 import AssayImportModal from "../components/AssayImportModal.jsx";
@@ -386,7 +388,7 @@ export default function GeochemModule() {
             if (q) quals[e.symbol] = q;
           }
         });
-        const out = { hole_id: String(r[mapping.hole_id] ?? "").trim(), from: num(r[mapping.from]), to: num(r[mapping.to]), values, source: modal.isPxrf ? "pXRF" : "assay" };
+        const out = { hole_id: String(r[mapping.hole_id] ?? "").trim(), from: num(r[mapping.from]), to: num(r[mapping.to]), values, source: modal.isPxrf ? "pXRF" : "assay", ...(modal.fileName ? { srcFile: modal.fileName } : {}) }; // srcFile: #624
         if (Object.keys(quals).length) out.qualifiers = quals;
         if (Object.keys(valueSources).length) out.valueSources = valueSources; // #542 — which method each over-limit value is
         return tagQC(out, r);
@@ -402,7 +404,7 @@ export default function GeochemModule() {
         if (!sym || !chosen.find((c) => c.symbol === sym)) return;
         const hole = String(r[mapping.hole_id] ?? "").trim(), from = num(r[mapping.from]), to = num(r[mapping.to]);
         const key = `${hole}|${from}|${to}`;
-        if (!byInterval.has(key)) byInterval.set(key, tagQC({ hole_id: hole, from, to, values: {}, source: modal.isPxrf ? "pXRF" : "assay" }, r));
+        if (!byInterval.has(key)) byInterval.set(key, tagQC({ hole_id: hole, from, to, values: {}, source: modal.isPxrf ? "pXRF" : "assay", ...(modal.fileName ? { srcFile: modal.fileName } : {}) }, r)); // srcFile: #624
         let { v, q } = read(r[mapping.value], sym, String(r[mapping.analyte] ?? "")); // TASKS.csv #261 qualifiers, #333 negatives, #334 units, #403 oxides
         if (v == null && blankMode === "bdl" && isBlankAssayCell(r[mapping.value])) ({ v, q } = blankAsBdl(sym, String(r[mapping.analyte] ?? "")) || { v, q }); // #502
         if (v != null) {
@@ -723,6 +725,8 @@ export default function GeochemModule() {
         <div style={{ fontSize: 11, color: "#65717e", margin: "10px 0 4px" }}>
           {assays.length ? `${assays.length} intervals · ${assayElements.length} elements` : "No assays loaded"}
         </div>
+        {/* TASKS.csv #624 — remove what was imported: a whole file, one element, or everything (all undoable) */}
+        {assays.length > 0 && <AssayRemovePanel assays={assays} assayElements={assayElements} setAssays={setAssays} setAssayElements={setAssayElements} setNotices={setNotices} colorElement={colorElement} setColorElement={setColorElement} />}
         <div className="ge-section-label" style={{ marginTop: 14 }}>Surface samples</div>
         <div style={{ fontSize: 11, color: "#65717e", margin: "10px 0 4px" }}>
           {surfaceSamples.length ? `${surfaceSamples.length} samples · ${surfaceElements.length} elements` : "No surface samples loaded"}
@@ -988,3 +992,64 @@ export default function GeochemModule() {
 const panelBtn = { display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "8px 10px", marginBottom: 6, background: "#f4f5f7", border: "1px solid #d9dce1", borderRadius: 6, color: "#1a2028", fontSize: 12, cursor: "pointer" };
 const genBtn = { ...panelBtn, background: "#1e3629", border: "1px solid #3d6b52", color: "#8fd9ab" };
 const selectStyle = { background: "#ffffff", border: "1px solid #d9dce1", borderRadius: 6, padding: "7px 10px", color: "#1a2028", fontSize: 12.5 };
+
+// TASKS.csv #624 — "currently there is no way to deleted imported assays". The imported files (each interval
+// remembers which file it came from), the elements, and Remove all — every removal goes through the undo history.
+function AssayRemovePanel({ assays, assayElements, setAssays, setAssayElements, setNotices, colorElement, setColorElement }) {
+  const [open, setOpen] = useState(false);
+  const files = useMemo(() => (open ? assayFileSummary(assays) : []), [open, assays]);
+  const xBtn = { background: "none", border: "none", cursor: "pointer", color: "var(--color-danger-icon)", padding: "0 2px", lineHeight: 1 };
+  const row = { display: "flex", alignItems: "center", gap: 6, fontSize: "var(--font-size-sm)", padding: "2px 0" };
+  const dropUnusedElements = (rows) => {
+    const used = new Set(); rows.forEach((r) => Object.keys(r.values || {}).forEach((k) => used.add(k)));
+    setAssayElements((prev) => prev.filter((e) => used.has(e.symbol)));
+    if (colorElement && !used.has(colorElement)) setColorElement(null);
+  };
+  const removeFile = (f) => {
+    const label = f.file == null ? "the assays imported before file names were recorded" : `"${f.file}"`;
+    if (!confirmDestructive(`Remove ${label} (${f.intervals.toLocaleString()} interval(s))?`, { undoable: true })) return;
+    const r = removeAssayFile(assays, f.file);
+    setAssays(r.assays); dropUnusedElements(r.assays);
+    setNotices((p) => [...p, `Removed ${r.removed.toLocaleString()} assay interval(s) from ${label}.${r.keptShared ? ` ${r.keptShared.toLocaleString()} interval(s) also came from another file and were kept (their values can't be separated by file).` : ""} Ctrl+Z to undo.`]);
+  };
+  const removeElement = (sym) => {
+    if (!confirmDestructive(`Remove ${sym} from every assay interval?`, { undoable: true })) return;
+    const r = removeAssayElement(assays, sym);
+    setAssays(r.assays);
+    setAssayElements((prev) => prev.filter((e) => e.symbol !== sym));
+    if (colorElement === sym) setColorElement(null);
+    setNotices((p) => [...p, `Removed ${sym} from ${r.cleared.toLocaleString()} interval(s)${r.emptied ? `; ${r.emptied.toLocaleString()} interval(s) had no other element and were removed` : ""}. Ctrl+Z to undo.`]);
+  };
+  const removeAll = () => {
+    if (!confirmDestructive(`Remove all ${assays.length.toLocaleString()} assay intervals and ${assayElements.length} element(s)?`, { undoable: true })) return;
+    setAssays([]); setAssayElements([]); setColorElement(null);
+    setNotices((p) => [...p, "Removed all assays. Ctrl+Z to undo."]);
+  };
+  return (
+    <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} style={{ fontSize: "var(--font-size-sm)", marginBottom: 6 }}>
+      <summary style={{ cursor: "pointer", color: "var(--color-text-secondary)" }}>Imported files &amp; elements — remove…</summary>
+      {open && (
+        <div style={{ paddingTop: 4 }}>
+          <div style={{ color: "var(--color-text-muted)", margin: "2px 0" }}>Files</div>
+          {files.map((f) => (
+            <div key={f.file ?? "(untracked)"} style={row}>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.file ?? "Imported before GeoStrix recorded file names"}>{f.file ?? "(imported earlier — file not recorded)"}</span>
+              <span style={{ color: "var(--color-text-muted)", flexShrink: 0 }}>{f.intervals.toLocaleString()}</span>
+              <button type="button" style={xBtn} onClick={() => removeFile(f)} aria-label={`Remove assays from ${f.file ?? "files imported earlier"}`} title="Remove this file's assay intervals"><X size={13} /></button>
+            </div>
+          ))}
+          <div style={{ color: "var(--color-text-muted)", margin: "6px 0 2px" }}>Elements</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {assayElements.map((e) => (
+              <span key={e.symbol} style={{ display: "inline-flex", alignItems: "center", gap: 2, border: "1px solid var(--color-border)", borderRadius: 4, padding: "1px 2px 1px 6px" }}>
+                {e.symbol}
+                <button type="button" style={xBtn} onClick={() => removeElement(e.symbol)} aria-label={`Remove element ${e.symbol}`} title={`Remove ${e.symbol} from every interval`}><X size={12} /></button>
+              </span>
+            ))}
+          </div>
+          <button type="button" onClick={removeAll} style={{ marginTop: 8, width: "100%", padding: "5px 8px", border: "1px solid var(--color-danger-fg)", color: "var(--color-danger-fg)", background: "var(--color-bg)", borderRadius: 5, cursor: "pointer" }}>Remove all assays</button>
+        </div>
+      )}
+    </details>
+  );
+}
