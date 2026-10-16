@@ -202,15 +202,16 @@ jobs:
         #
         # Creating the release up front removes the race entirely: both publishers then find an
         # existing release and just upload into it. Idempotent so a re-run of the same tag is safe.
-        # Notes are left empty deliberately — they're filled in after the fact; --verify-tag makes this
-        # fail loudly rather than inventing a tag if the ref is somehow wrong.
+        # Notes carry the standing links (TASKS.csv #629: SignPath asks for "Code signing policy" on the download /
+        # release pages); the changes are added after the fact. --verify-tag makes this fail loudly rather than
+        # inventing a tag if the ref is somehow wrong.
         run: |
           # Actions runs pwsh with $ErrorActionPreference='stop'; a `gh` probe that legitimately fails
           # (release not created yet) writes to stderr, so relax it here and branch on the exit code.
           $ErrorActionPreference = 'Continue'
           gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" 2>&1 | Out-Null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "" --verify-tag
+            gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "Download **GeoStrix-Setup-*.exe** below (Windows 10 / 11, 64-bit), or the portable **GeoStrix-*-win.zip**. Checksums: SHA256SUMS.txt.`n`n[Code signing policy](https://github.com/${{ github.repository }}/blob/master/CODE_SIGNING.md) · [Privacy policy](https://geostrix.com/privacy) · [geostrix.com](https://geostrix.com)" --verify-tag
           } else {
             Write-Host "Release ${{ github.ref_name }} already exists - uploading into it."
           }

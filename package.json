@@ -92,7 +92,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "license": "build/installer-notice.txt"
     },
     "electronFuses": {
       "runAsNode": false,
