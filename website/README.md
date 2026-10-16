@@ -10,10 +10,13 @@ The GeoStrix website: plain HTML + CSS, no build step, no framework, no cookies,
 - `fonts/` — Exo 2 (SIL OFL), served from here instead of Google Fonts
 - `_headers` — Cloudflare Pages security / cache headers
 
-## Deploy (Cloudflare Pages)
+## Deploy (Cloudflare Workers, static assets)
 
-1. Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git → `Matt-Mendes-ai/geostrix`.
-2. Framework preset: None. Build command: (empty). Build output directory: `website`.
-3. After the first deploy: Custom domains → add `geostrix.com` (and `www.geostrix.com`).
+The repo root has `wrangler.jsonc`, which tells Cloudflare to serve `website/` and nothing else.
+
+1. Workers & Pages → the `geostrix` Worker → Settings → Build → Build configuration:
+   **Build command: empty** (the desktop app's `npm run build` must not run there) · **Deploy command: `npx wrangler deploy`** · Root directory: `/`.
+2. Deployments → retry the latest build.
+3. Settings → Domains & Routes → Add → Custom domain → `geostrix.com` (and `www.geostrix.com`).
 
 Every push to `master` redeploys. Preview locally with any static server, e.g. `python -m http.server -d website 8080`.
