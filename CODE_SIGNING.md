@@ -102,6 +102,6 @@ signed with the same identity.
 
 | Versions | Signing status |
 | --- | --- |
-| 0.1.0 – 0.1.39 | Unsigned. Windows may show a SmartScreen warning; choose **More info** → **Run anyway**. |
+| 0.1.0 – 0.1.40 | Unsigned. Windows may show a SmartScreen warning; choose **More info** → **Run anyway**. |
 
 This table will be updated when the first signed release ships.
