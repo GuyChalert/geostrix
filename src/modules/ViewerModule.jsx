@@ -43,7 +43,7 @@ import SidebarResizeHandle from "../components/SidebarResizeHandle.jsx";
 import { useSidebarWidth } from "../lib/useSidebarWidth.js";
 import PanelSplitHandle from "../components/PanelSplitHandle.jsx";
 import { useBrowserPanelHeight } from "../lib/useBrowserPanelHeight.js";
-import DbBrowserPanel from "../components/DbBrowserPanel.jsx";
+const DbBrowserPanel = React.lazy(() => import("../components/DbBrowserPanel.jsx")); // startup budget (#476): loads after the first paint
 const ImportMappingModal = lazyModal(() => import("../components/ImportMappingModal.jsx"));  // TASKS.csv #301
 const LayerPickerModal = lazyModal(() => import("../components/LayerPickerModal.jsx")); // TASKS.csv #476 // TASKS.csv #288
 const DatabaseConnectModal = lazyModal(() => import("../components/DatabaseConnectModal.jsx"));  // TASKS.csv #301
@@ -75,7 +75,7 @@ import { slabRuns, piercePoints, tracePolylines, pointAtMd, voxelPlanRects, mesh
 import { ghostStrings } from "../lib/sectionDigitise.js"; // TASKS.csv #519
 import { trueNorthBearingInGridDeg } from "../lib/inversion.js"; // TASKS.csv #577 (already in the startup chunk via compactRows)
 import { unitShell, meshVolume } from "../lib/unitVolumes.js"; // TASKS.csv #517
-import ModellingCodesPane from "../components/ModellingCodesPane.jsx"; // TASKS.csv #599
+const ModellingCodesPane = React.lazy(() => import("../components/ModellingCodesPane.jsx")); // TASKS.csv #599 — modelling view only, so loaded on demand (#476 budget)
 import { resolveLayerStyle, cleanLayerStyle, TUBE_SEGMENTS } from "../lib/layerStyle.js"; // TASKS.csv #635
 import { LAYER_META, colorForLithology, rqdColor, magColor, hashColor, distinctValues, minMax, colorForVoxelValue, makeVoxelColorResolverRGB, roleForLithology, isCrossCuttingRole, colorForMedium, classifyBreaks, paletteColorsHex, PALETTES, CATEGORICAL_SAFE_COLORS } from "../lib/layers.js";
 import { computeMeshVolume, computeTonnage } from "../lib/volumetrics.js";
@@ -7460,9 +7460,9 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         </>)}
         {toolPane === "mcodes" && (<>
         {paneHeader("Modelling codes", Waypoints, "model")}
-        <ModellingCodesPane litho={layers.litho || []} modellingCodes={modellingCodes} setModellingCodes={setModellingCodes} groupOf={mcGroupOf} defaultRole={mcodeDefaultRole}
+        <Suspense fallback={null}>        <ModellingCodesPane litho={layers.litho || []} modellingCodes={modellingCodes} setModellingCodes={setModellingCodes} groupOf={mcGroupOf} defaultRole={mcodeDefaultRole}
           pickMode={mcPickMode} setPickMode={setMcPickMode} selected={mcSelected} setSelected={setMcSelected} connectFrom={mcConnectFrom} setConnectFrom={setMcConnectFrom}
-          askPrompt={askPrompt} pBtn={pBtn} inputStyle={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: 4, padding: "3px 5px", color: "var(--color-text)", fontSize: "var(--font-size-sm)" }} />
+          askPrompt={askPrompt} pBtn={pBtn} inputStyle={{ background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: 4, padding: "3px 5px", color: "var(--color-text)", fontSize: "var(--font-size-sm)" }} /></Suspense>
         </>)}
         {toolPane === "groups" && (<>
         {paneHeader("Lithology groups", Group, "model")}
@@ -8564,7 +8564,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       {sidebarTab === "home" && (<>
         <PanelSplitHandle height={browserHeight} onResize={setBrowserHeight} invert title="Drag to resize the Browser panel" />
         <div style={{ height: browserHeight, flexShrink: 0 }}>
-          <DbBrowserPanel onImportFile={importBrowserFile} onImportRows={openImportFromRows} />
+          <Suspense fallback={null}><DbBrowserPanel onImportFile={importBrowserFile} onImportRows={openImportFromRows} /></Suspense>
         </div>
       </>)}
       </div>
