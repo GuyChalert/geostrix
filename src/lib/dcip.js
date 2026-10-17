@@ -96,6 +96,21 @@ export function lineGeometry(start, end, scale = 1) {
   return { u, length: len, azimuth, scale: k, at: (s) => [start[0] + u[0] * s * k, start[1] + u[1] * s * k] };
 }
 
+// TASKS.csv #634 — the line placed from two points the user knows, each at a position along the line (normally the
+// first and last electrode, looked up in a GPS / station list): returns the stored form (x0/y0 = position 0, x1/y1 =
+// position s2, chaining scale = ground metres per file metre), so at(s1) and at(s2) land exactly on the two points.
+// null when the points coincide or the positions are equal.
+export function lineFromTwoPoints({ s1, x1, y1, s2, x2, y2 }) {
+  const v = [s1, x1, y1, s2, x2, y2].map((t) => (t === "" || t == null ? NaN : Number(t)));
+  if (!v.every(Number.isFinite) || v[0] === v[3]) return null;
+  const [a, ax, ay, b, bx, by] = v;
+  const d = Math.hypot(bx - ax, by - ay);
+  if (!(d > 0)) return null;
+  const sign = b > a ? 1 : -1, u = [sign * (bx - ax) / d, sign * (by - ay) / d], k = d / Math.abs(b - a);
+  const x0 = ax - u[0] * k * a, y0 = ay - u[1] * k * a;
+  return { x0, y0, x1: x0 + u[0] * k * b, y1: y0 + u[1] * k * b, scale: k };
+}
+
 // Ground profile along the line from the terrain, from s0 to s1 (m along the line), for the mesh's air/ground
 // boundary; null when the line leaves the terrain (the caller then asks for a flat ground elevation).
 export function terrainProfile(terrain, geom, s0, s1, n = 120) {

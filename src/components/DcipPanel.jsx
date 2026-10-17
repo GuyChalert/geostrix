@@ -7,7 +7,7 @@ import { Upload, Play, Download, Trash2 } from "./icons.js";
 import Papa from "papaparse";
 import { useStore, useSetTaskProgress } from "../lib/store.jsx";
 import { parseTableFile, decodeTableBytes } from "../lib/tabular.js";
-import { guessDcipColumns, parseDcipRows, parseDcipWhitespaceText, lineGeometry, terrainProfile, slopeToHorizontalFromProfile, slopeToHorizontalFromStations, readingsToHorizontal, pseudoPositions, sectionCells, slimDcipResult, savedLineToFile, sectionTableRows } from "../lib/dcip.js";
+import { guessDcipColumns, parseDcipRows, parseDcipWhitespaceText, lineGeometry, lineFromTwoPoints, terrainProfile, slopeToHorizontalFromProfile, slopeToHorizontalFromStations, readingsToHorizontal, pseudoPositions, sectionCells, slimDcipResult, savedLineToFile, sectionTableRows } from "../lib/dcip.js";
 import { renderDcipSectionPng } from "../lib/dcipSectionImage.js";
 import { stampLines, withStamp } from "../lib/provenance.js";
 import { version as APP_VERSION } from "../../package.json";
@@ -55,6 +55,26 @@ export default function DcipPanel({ pBtn, numInput }) {
 
   const parsed = useMemo(() => (file && mapping.a && mapping.m && mapping.rho ? parseDcipRows(file.rows, mapping) : null), [file, mapping]);
   const geom = useMemo(() => { const g = [line.x0, line.y0, line.x1, line.y1].map(num); return g.every(Number.isFinite) ? lineGeometry([g[0], g[1]], [g[2], g[3]], num(line.scale) || 1) : null; }, [line]);
+  // TASKS.csv #634 — Matt: "We shouldn't have to try to figure out which coordinates to enter. The app should point to
+  // the user which points are which". The stored start (x0/y0) is POSITION 0 on the line — usually a point nobody
+  // surveyed (line 9000E starts at station 800). So the line is typed as two points the user can look up: by default
+  // the first and last electrode positions in the data file, each with its x / y (e.g. waypoints "9000E 800N" and
+  // "9000E 2100N"). Placed lines (station file, saved line) show the same two points, computed, so they can be checked.
+  const span = parsed?.span || null;
+  const shownPts = useMemo(() => {
+    if (line.pts) return line.pts;
+    const r = (v) => String(+v.toFixed(1));
+    const s1 = span ? span[0] : "", s2 = span ? span[1] : "";
+    if (geom && span) { const a = geom.at(s1), b = geom.at(s2); return { s1, x1: r(a[0]), y1: r(a[1]), s2, x2: r(b[0]), y2: r(b[1]) }; }
+    return { s1, x1: "", y1: "", s2, x2: "", y2: "" };
+  }, [line.pts, geom, span]);
+  const setPt = (k, v) => {
+    const pts = { ...shownPts, [k]: v };
+    const L = lineFromTwoPoints(pts);
+    const r = (x) => String(+x.toFixed(2));
+    setLine((l) => ({ ...l, pts, ...(L ? { x0: r(L.x0), y0: r(L.y0), x1: r(L.x1), y1: r(L.y1), scale: Math.abs(L.scale - 1) > 0.002 ? String(+L.scale.toFixed(4)) : "" } : {}) }));
+  };
+  const ptScaleOff = line.pts && geom && Math.abs(geom.scale - 1) > 0.05 ? geom.scale : null;
   const running = job?.status?.state === "running";
 
   const onFile = async (f) => {
@@ -67,6 +87,9 @@ export default function DcipPanel({ pBtn, numInput }) {
         if (w) t = { headers: w.headers, rows: w.rows, note: w.note };
       }
       const m = guessDcipColumns(t.headers);
+      // TASKS.csv #634 — a different line's file starts unplaced: the previous line's position (and stations) used to
+      // carry over, silently putting e.g. 8575E on 9000E's coordinates. Reloading the same file keeps it.
+      if (f.name !== file?.name) setLine((l) => ({ x0: "", y0: "", x1: "", y1: "", ground: "", scale: "", stations: null, pts: null, positions: l.positions }));
       setFile({ name: f.name, headers: t.headers, rows: t.rows });
       setMapping(m);
       const p = m.a && m.m && m.rho ? parseDcipRows(t.rows, m) : null;
@@ -108,12 +131,12 @@ export default function DcipPanel({ pBtn, numInput }) {
     if (!fit) { setMsg({ ok: false, text: `${sf.name}: line ${lineKey} needs at least two stations at different distances to place it.` }); return; }
     const r1 = (v) => String(+v.toFixed(1));
     const scale = Math.abs(fit.scale - 1) > 0.002 ? String(+fit.scale.toFixed(4)) : "";
-    setLine((l) => ({ ...l, x0: r1(fit.start[0]), y0: r1(fit.start[1]), x1: r1(fit.end[0]), y1: r1(fit.end[1]), scale, stations: { file: sf.name, line: lineKey, list } }));
+    setLine((l) => ({ ...l, x0: r1(fit.start[0]), y0: r1(fit.start[1]), x1: r1(fit.end[0]), y1: r1(fit.end[1]), scale, pts: null, stations: { file: sf.name, line: lineKey, list } })); // #634 pts null: the two points shown are re-derived from the fit
     const zs = list.filter((p) => Number.isFinite(p.z)).map((p) => p.z);
     const scaleText = scale ? ` Chaining scale ${scale}: the file's distances are ${Math.abs((1 / fit.scale - 1) * 100).toFixed(1)}% ${fit.scale < 1 ? "longer" : "shorter"} than the ground between the stations (slope chaining?) — applied to the 3D placement only.` : "";
     const sp = parsed?.span;
     const reach = sp && (sp[0] < list[0].s || sp[1] > list[list.length - 1].s) ? ` Electrodes ${sp[0]}–${sp[1]} m reach past the stations (${list[0].s}–${list[list.length - 1].s} m).` : "";
-    setMsg({ ok: true, text: `${sf.name}: line ${lineKey}, ${list.length} stations ${list[0].s}–${list[list.length - 1].s} m${crsText}. Placed by a best fit, azimuth ${fit.azimuth.toFixed(1)}°; stations sit within ${fit.maxAcross.toFixed(1)} m of the line.${scaleText}${zs.length >= 2 ? ` Ground profile from ${zs.length} station elevations (${arrMin(zs).toFixed(1)}–${arrMax(zs).toFixed(1)} m).` : " The file has no elevations — terrain or the flat ground is used."}${reach}${sf.other?.length ? ` Not stations: ${sf.other.map((o) => o.name).join(", ")}.` : ""}` });
+    setMsg({ ok: true, text: `${sf.name}: line ${lineKey}, ${list.length} stations ${list[0].s}–${list[list.length - 1].s} m${crsText}. Placed by a best fit, azimuth ${fit.azimuth.toFixed(1)}°; stations sit within ${fit.maxAcross.toFixed(1)} m of the line.${scaleText}${zs.length >= 2 ? ` Ground profile from ${zs.length} station elevations (${arrMin(zs).toFixed(1)}–${arrMax(zs).toFixed(1)} m).` : " The file has no elevations — terrain or the flat ground is used."}${reach}${sf.other?.length ? ` Not stations: ${sf.other.map((o) => (/infin/i.test(o.name) ? `${o.name} (the remote "infinite" current electrode, for pole arrays)` : o.name)).join(", ")}.` : ""}` });
   };
   const onStationFile = async (f) => {
     if (!f) return;
@@ -130,7 +153,7 @@ export default function DcipPanel({ pBtn, numInput }) {
   const run = async () => {
     const problems = [];
     if (!parsed || !parsed.readings.length) problems.push("Import a line with A, M and apparent-resistivity columns.");
-    if (!geom) problems.push("Enter the line's start and end coordinates (distance 0 = start).");
+    if (!geom) problems.push("Place the line: load its GPS / station file, or type two points on it (position and x / y).");
     if (!(num(opts.cell) > 0) || !(num(opts.depth) > num(opts.cell))) problems.push("Enter the cell size and model depth.");
     if (!(num(opts.pct) > 0) && !(num(opts.floor) > 0)) problems.push("Enter the resistivity data uncertainty (% and / or a floor) — how far you trust each reading.");
     if (parsed?.ip && !(num(opts.ipPct) > 0) && !(num(opts.ipFloor) > 0)) problems.push("Enter the chargeability uncertainty (% and / or a floor in mV/V).");
@@ -257,17 +280,8 @@ export default function DcipPanel({ pBtn, numInput }) {
               title="Store the readings, line position and settings in the project file, so the line can be reloaded and re-inverted without the CSV.">Keep line in project</button>
           )}
           <div className="ge-section-label" style={{ marginTop: 10 }}>Line position (project CRS)</div>
-          <div style={row}><span style={lbl}>Start x / y</span><input type="number" value={line.x0} onChange={(e) => setLine((l) => ({ ...l, x0: e.target.value }))} style={inp} aria-label="Line start x" /><input type="number" value={line.y0} onChange={(e) => setLine((l) => ({ ...l, y0: e.target.value }))} style={inp} aria-label="Line start y" /></div>
-          <div style={row}><span style={lbl}>End x / y</span><input type="number" value={line.x1} onChange={(e) => setLine((l) => ({ ...l, x1: e.target.value }))} style={inp} aria-label="Line end x" /><input type="number" value={line.y1} onChange={(e) => setLine((l) => ({ ...l, y1: e.target.value }))} style={inp} aria-label="Line end y" /></div>
-          {geom && <div style={small}>Line {Math.round(geom.length)} m long, azimuth {geom.azimuth.toFixed(1)}° (grid). Distances in the file are measured from the start.</div>}
-          <div style={row} title="How the electrode distances in the file were measured. Chained along the ground on a slope, they are longer than the horizontal distance (cos 30° = 0.87): converted using the line stations, or the terrain."><span style={lbl}>Positions are</span>
-            <select value={line.positions || "horizontal"} onChange={(e) => setLine((l) => ({ ...l, positions: e.target.value }))} style={{ ...numInput, flex: 1, minWidth: 0 }} aria-label="Electrode position convention">
-              <option value="horizontal">horizontal distances</option>
-              <option value="slope">chained along the ground (slope)</option>
-            </select>
-          </div>
-          <div style={row} title="Ground metres per metre of the file's distances (from a station fit; blank = 1). Moves the section in 3D only — the inversion uses the file's distances."><span style={lbl}>Chaining scale</span><input type="number" step={0.001} value={line.scale} placeholder="1" disabled={line.positions === "slope"} onChange={(e) => setLine((l) => ({ ...l, scale: e.target.value }))} style={inp} aria-label="Chaining scale" />{line.positions === "slope" && <span style={small}>not used — slope positions are converted</span>}</div>
-          <button onClick={() => stationRef.current?.click()} style={{ ...pBtn, marginTop: 6 }} title="GPS waypoints named '<line> <station>' (e.g. GPS Utility '8575E 750N'), or a table with station, X, Y and optionally elevation: places the line and gives the ground profile"><Upload size={14} /> Line stations (GPS / station file)…</button>
+          <div style={{ ...small, marginBottom: 4 }}>Easiest: load the survey's GPS or station file — GeoStrix finds line {lineName}'s stations, places the line and takes the ground elevations from them.</div>
+          <button onClick={() => stationRef.current?.click()} style={{ ...pBtn, marginTop: 6 }} title="GPS waypoints named '<line> <station>' (e.g. GPS Utility '8575E 750N'), or a table with station, X, Y and optionally elevation: places the line and gives the ground profile"><Upload size={14} /> Load the line stations (GPS / station file)…</button>
           <input ref={stationRef} type="file" accept=".txt,.csv,.dat,.gpx,.wpt,.xyz" style={{ display: "none" }} onChange={(e) => { onStationFile(e.target.files[0]); e.target.value = ""; }} />
           {stationFile && (
             <div style={row}>
@@ -284,6 +298,24 @@ export default function DcipPanel({ pBtn, numInput }) {
               <button onClick={() => setLine((l) => ({ ...l, stations: null }))} style={{ ...pBtn, width: "auto", padding: "2px 6px", marginBottom: 0 }} title="Stop using the station elevations (the placement stays)">Clear</button>
             </div>
           )}
+          <div style={{ ...small, margin: "6px 0 4px" }}>Or type two points on the line: the position in the data file and that point's x / y in the project's coordinate system{project?.epsg ? ` (EPSG:${project.epsg})` : ""} — from the GPS file, a map or the field notes.{span ? ` Already filled with the first and last electrode (${span[0]} and ${span[1]} m) — look up those two stations.` : ""}</div>
+          {[["1", "s1", "x1", "y1", span && Number(shownPts.s1) === span[0] ? "first electrode" : ""], ["2", "s2", "x2", "y2", span && Number(shownPts.s2) === span[1] ? "last electrode" : ""]].map(([n, sk, xk, yk, tag]) => (
+            <div key={n} style={row} title={`Point ${n}: its position along the line in the data file's distances, and its coordinates in the project CRS.`}>
+              <span style={lbl}>Point {n}{tag ? <span style={{ color: "var(--color-text-muted)" }}> ({tag})</span> : null}</span>
+              <input type="number" value={shownPts[sk]} onChange={(e) => setPt(sk, e.target.value)} style={{ ...inp, width: 64, flex: "0 0 auto" }} aria-label={`Point ${n} position along the line (m)`} placeholder="m" />
+              <input type="number" value={shownPts[xk]} onChange={(e) => setPt(xk, e.target.value)} style={inp} aria-label={`Point ${n} x`} placeholder="x" />
+              <input type="number" value={shownPts[yk]} onChange={(e) => setPt(yk, e.target.value)} style={inp} aria-label={`Point ${n} y`} placeholder="y" />
+            </div>
+          ))}
+          {geom && <div style={small}>Line placed: azimuth {geom.azimuth.toFixed(1)}° (grid){span ? `; electrodes ${span[0]}–${span[1]} m run from ${geom.at(span[0]).map((v) => v.toFixed(0)).join(", ")} to ${geom.at(span[1]).map((v) => v.toFixed(0)).join(", ")}` : ""}.{line.stations ? "" : " Check these against your GPS file or map."}</div>}
+          {ptScaleOff && <div style={{ ...small, color: "var(--color-warn-text)" }}>The two points are {Math.abs((ptScaleOff - 1) * 100).toFixed(0)}% {ptScaleOff > 1 ? "further apart" : "closer together"} than their positions say — check the positions and coordinates (or the distances were chained along a slope).</div>}
+          <div style={row} title="How the electrode distances in the file were measured. Chained along the ground on a slope, they are longer than the horizontal distance (cos 30° = 0.87): converted using the line stations, or the terrain."><span style={lbl}>Positions are</span>
+            <select value={line.positions || "horizontal"} onChange={(e) => setLine((l) => ({ ...l, positions: e.target.value }))} style={{ ...numInput, flex: 1, minWidth: 0 }} aria-label="Electrode position convention">
+              <option value="horizontal">horizontal distances</option>
+              <option value="slope">chained along the ground (slope)</option>
+            </select>
+          </div>
+          <div style={row} title="Ground metres per metre of the file's distances (from a station fit; blank = 1). Moves the section in 3D only — the inversion uses the file's distances."><span style={lbl}>Chaining scale</span><input type="number" step={0.001} value={line.scale} placeholder="1" disabled={line.positions === "slope"} onChange={(e) => setLine((l) => ({ ...l, scale: e.target.value }))} style={inp} aria-label="Chaining scale" />{line.positions === "slope" && <span style={small}>not used — slope positions are converted</span>}</div>
           <div style={row} title="Used when there are no station elevations and no terrain under the line."><span style={lbl}>Flat ground (m)</span><input type="number" value={line.ground} onChange={(e) => setLine((l) => ({ ...l, ground: e.target.value }))} style={inp} aria-label="Flat ground elevation" /><span style={small}>{line.stations?.list.some((p) => Number.isFinite(p.z)) ? "not used — station elevations" : terrain ? "only if the line leaves the terrain" : "no terrain loaded"}</span></div>
           <div className="ge-section-label" style={{ marginTop: 10 }}>Inversion</div>
           <div style={row} title="Horizontal cell size; half the smallest electrode spacing is a good start (vertical cells are half this)."><span style={lbl}>Cell / depth (m)</span><input type="number" value={opts.cell} onChange={(e) => setOpts((o) => ({ ...o, cell: e.target.value }))} style={inp} aria-label="Cell size" /><input type="number" value={opts.depth} onChange={(e) => setOpts((o) => ({ ...o, depth: e.target.value }))} style={inp} aria-label="Model depth" /></div>
