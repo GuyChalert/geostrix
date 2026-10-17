@@ -63,3 +63,28 @@ export function sectionFitSummary(fit, width, height) {
   const zTop = forwardMap(fit.t, width / 2, 0).y, zBottom = forwardMap(fit.t, width / 2, height).y;
   return { fromDist: Math.min(...ds), toDist: Math.max(...ds), zTop, zBottom, upsideDown: zTop < zBottom, mirrored: ds[1] < ds[0] };
 }
+
+// TASKS.csv #631 — which georeferenced section images lie on a cross-section (so the section window can draw them
+// behind the holes and contacts), and where: the image's top-left, top-right and bottom-left corners as (distance
+// along the section, elevation). An image counts when its line runs within `maxAngle`° of the section's (either
+// direction) and every corner is within `maxOffset` m of the section line (the section's corridor, at least 10 m).
+// section: { ax, ay, bx, by }; images: [{ id, name, corners: [[x,y,z] TL, TR, BR, BL], visible, … }]
+export function sectionImagesOnSection(images, section, maxOffset = 10, maxAngle = 3) {
+  const dx = section.bx - section.ax, dy = section.by - section.ay, len = Math.hypot(dx, dy);
+  if (!(len > 0)) return [];
+  const ux = dx / len, uy = dy / len;
+  const along = ([x, y]) => (x - section.ax) * ux + (y - section.ay) * uy;
+  const across = ([x, y]) => Math.abs(-(x - section.ax) * uy + (y - section.ay) * ux);
+  const out = [];
+  for (const im of images || []) {
+    if (im.visible === false || !Array.isArray(im.corners) || im.corners.length !== 4) continue;
+    const [tl, tr, , bl] = im.corners;
+    const ix = tr[0] - tl[0], iy = tr[1] - tl[1], il = Math.hypot(ix, iy);
+    if (!(il > 0)) continue;
+    const cos = Math.abs((ix * ux + iy * uy) / il);
+    if (cos < Math.cos((maxAngle * Math.PI) / 180)) continue;
+    if (im.corners.some((c) => across(c) > Math.max(10, maxOffset))) continue;
+    out.push({ id: im.id, name: im.name, opacity: im.opacity ?? 1, tl: [along(tl), tl[2]], tr: [along(tr), tr[2]], bl: [along(bl), bl[2]], offset: Math.max(...im.corners.map(across)) });
+  }
+  return out;
+}

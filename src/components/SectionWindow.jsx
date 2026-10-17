@@ -56,6 +56,7 @@ export default function SectionWindow() {
   // page height itself grows/shrinks with the exaggerated z-range rather than squeezing a fixed box,
   // since faking exaggeration inside a fixed box would just be a different, undisclosed distortion.
   const [vExag, setVExag] = useState(1);
+  const [showSectionImages, setShowSectionImages] = useState(true); // TASKS.csv #631
 
   // Layout's "assign a scale bar" feature (mirrors the existing viewport worldHeightAtTarget pattern —
   // see LayoutModule.jsx's onSyncScaleBar) needs to know the true real-world scale of whatever gets
@@ -281,6 +282,11 @@ export default function SectionWindow() {
           <button onClick={snapshotToLayout} style={btnStyle(snapped)}>
             <Camera size={14} /> {snapped ? "Sent ✓" : "Snapshot to Layout"}
           </button>
+          {data.sectionImages?.length > 0 && ( // TASKS.csv #631
+            <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#55606e" }} title={`Georeferenced section image(s) on this line, drawn behind the holes and contacts: ${data.sectionImages.map((i) => i.name).join(", ")}`}>
+              <input type="checkbox" checked={showSectionImages} onChange={(e) => setShowSectionImages(e.target.checked)} /> Section image
+            </label>
+          )}
           <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#55606e" }} title="Vertical exaggeration — 1x is true scale (vertical and horizontal axes at the same real-world-units-per-pixel)">
             VE
             <input type="number" min="0.1" max="20" step="0.5" value={vExag} onChange={(e) => setVExag(Math.max(0.1, Number(e.target.value) || 1))} style={{ width: 46, background: "#ffffff", border: "1px solid #d9dce1", borderRadius: 4, color: "#1a2028", fontSize: 11, padding: "3px 5px" }} />
@@ -333,7 +339,7 @@ export default function SectionWindow() {
 
       <div className="ge-section-body" style={{ flex: 1, overflow: "auto", padding: 16 }}>
         {editingId && <div style={{ fontSize: 11, color: "#b06a1f", marginBottom: 6 }}>Editing "{editing?.unit}": drag a vertex to move it, Alt-click a vertex to delete it, click the line to insert one{snapOn ? " (snapping to holes)" : ""}. Click the pencil again to finish; Save contacts keeps the changes.</div>}
-        <SectionSVG data={planAdded.length ? { ...data, plannedHoles: [...(data.plannedHoles || []), ...planAdded] } : data} svgRef={svgRef} contacts={contacts} drawing={drawing || planning} drawPoints={drawPoints} onAddPoint={(pt) => (planning ? addPlanPoint(pt) : setDrawPoints((p) => [...p, pt]))} vExag={vExag} geomRef={geomRef} planPts={planning ? planPts : []}
+        <SectionSVG showSectionImages={showSectionImages} data={planAdded.length ? { ...data, plannedHoles: [...(data.plannedHoles || []), ...planAdded] } : data} svgRef={svgRef} contacts={contacts} drawing={drawing || planning} drawPoints={drawPoints} onAddPoint={(pt) => (planning ? addPlanPoint(pt) : setDrawPoints((p) => [...p, pt]))} vExag={vExag} geomRef={geomRef} planPts={planning ? planPts : []}
           snap={snapOn && !planning ? targets : null} editingId={editingId} onEditPoints={editPoints} />
       </div>
     </div>
@@ -345,9 +351,9 @@ function btnStyle(active) {
 }
 const selectStyle = { padding: "5px 8px", background: "#f4f5f7", border: "1px solid #d9dce1", borderRadius: 6, color: "#1a2028", fontSize: 11.5 };
 
-function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, vExag, geomRef, planPts = [], snap = null, editingId = null, onEditPoints }) {
+function SectionSVG({ showSectionImages = true, data, svgRef, contacts, drawing, drawPoints, onAddPoint, vExag, geomRef, planPts = [], snap = null, editingId = null, onEditPoints }) {
   const dragRef = useRef(null); // #519 — the vertex being dragged (before the early return: a hook)
-  const { holes = [], section, intervals = [], points = [], planes = [], elevationProfile = null, voxelSlices = [], surfaceTraces = [], plannedHoles = [], title = "" } = data;
+  const { holes = [], section, intervals = [], points = [], planes = [], elevationProfile = null, voxelSlices = [], surfaceTraces = [], plannedHoles = [], title = "", sectionImages = [] } = data;
   const W = SECTION_W, PAD = 60;
   if (!section) return null;
 
@@ -370,6 +376,7 @@ function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, v
   // extends above/below the visible collars doesn't get silently clipped off the page.
   voxelSlices.forEach((vs) => vs.rects.forEach((r) => { minZ = Math.min(minZ, r.z0); maxZ = Math.max(maxZ, r.z1); }));
   plannedHoles.forEach((h) => h.trace.forEach((p) => { minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); })); // #395
+  if (showSectionImages) sectionImages.forEach((im) => [im.tl, im.tr, im.bl].forEach(([, z]) => { minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z); })); // #631
   if (!isFinite(minZ)) { minZ = 0; maxZ = 100; }
   const zPad = (maxZ - minZ) * 0.08 || 10;
   minZ -= zPad; maxZ += zPad;
@@ -470,6 +477,17 @@ function SectionSVG({ data, svgRef, contacts, drawing, drawPoints, onAddPoint, v
               ))}
             </g>
           ))}
+        </g>
+      )}
+      {/* TASKS.csv #631 — a georeferenced section image on this line (an old interpretation, a report figure), stretched
+          onto its corners in (distance, elevation) — so it follows the vertical exaggeration — behind holes and contacts. */}
+      {showSectionImages && sectionImages.length > 0 && (
+        <g clipPath="url(#sectionPlotArea)">
+          {sectionImages.map((im) => {
+            const tl = [sx(im.tl[0]), sz(im.tl[1])], tr = [sx(im.tr[0]), sz(im.tr[1])], bl = [sx(im.bl[0]), sz(im.bl[1])];
+            const m = [(tr[0] - tl[0]) / im.width, (tr[1] - tl[1]) / im.width, (bl[0] - tl[0]) / im.height, (bl[1] - tl[1]) / im.height, tl[0], tl[1]];
+            return <image key={im.id} href={im.dataUrl} width={im.width} height={im.height} preserveAspectRatio="none" transform={`matrix(${m.join(" ")})`} opacity={Math.min(1, im.opacity) * 0.85}><title>{im.name}</title></image>;
+          })}
         </g>
       )}
 

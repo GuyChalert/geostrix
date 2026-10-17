@@ -51,3 +51,22 @@ test("#630 three or more points: affine handles a rotated scan; residuals expose
   const errs = sectionResiduals(bad).map((r) => r.error);
   assert.equal(errs.indexOf(Math.max(...errs)), 4, "the mistyped point has the largest residual");
 });
+
+test("#631 a section image is matched to a cross-section on (or along) its line, not to others", async () => {
+  const { sectionImagesOnSection } = await import("../src/lib/sectionGeoref.js");
+  const fit = fitSectionTransform([
+    { px: 100, py: 50, hKind: "distance", h: 100, z: 750 },
+    { px: 900, py: 450, hKind: "distance", h: 900, z: 350 },
+  ], line);
+  const im = { id: "a", name: "Old section", corners: sectionImageCorners(fit, line, 1000, 500), opacity: 0.8 };
+  // same line
+  const [m] = sectionImagesOnSection([im], { ax: 1000, ay: 2000, bx: 1600, by: 2800 }, 25);
+  near(m.tl[0], 0); near(m.tl[1], 800); near(m.tr[0], 1000); near(m.bl[1], 300); near(m.offset, 0, 1e-6);
+  // drawn the other way round (B -> A) and starting 100 m further out: distances flip, still matched
+  const [r] = sectionImagesOnSection([im], { ax: 1660, ay: 2880, bx: 1000, by: 2000 }, 25);
+  near(r.tl[0], 1100); near(r.tr[0], 100);
+  // a parallel section 50 m away, a crossing section, or a hidden image: not matched
+  assert.equal(sectionImagesOnSection([im], { ax: 1040, ay: 1970, bx: 1640, by: 2770 }, 25).length, 0);
+  assert.equal(sectionImagesOnSection([im], { ax: 1000, ay: 2800, bx: 1600, by: 2000 }, 25).length, 0);
+  assert.equal(sectionImagesOnSection([{ ...im, visible: false }], { ax: 1000, ay: 2000, bx: 1600, by: 2800 }, 25).length, 0);
+});

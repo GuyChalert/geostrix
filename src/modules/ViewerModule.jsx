@@ -6441,7 +6441,17 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // still creates a new section entry (matches the pre-existing ephemeral behavior); reopening a
   // previously-saved one goes through reopenSection below instead, which reuses its id/name so drawn
   // contacts keep accumulating on it.
-  const launchSection = () => {
+  // TASKS.csv #631 — georeferenced section images lying on this section's line, drawn behind its holes and contacts
+  // (lib/sectionGeoref.js sectionImagesOnSection, loaded on demand); each carries its picture for the section window.
+  const sectionImagesFor = async (a, b, corridor) => {
+    if (!sectionImages.length) return [];
+    const { sectionImagesOnSection } = await import("../lib/sectionGeoref.js");
+    return sectionImagesOnSection(sectionImages, { ax: a.x, ay: a.y, bx: b.x, by: b.y }, corridor).map((m) => {
+      const im = sectionImages.find((i) => i.id === m.id);
+      return { ...m, dataUrl: im.dataUrl, width: im.width, height: im.height };
+    });
+  };
+  const launchSection = async () => {
     const [a, b] = sectionPts.current;
     const corridor = sectionCorridor;
     const { azimuth, holes, intervals, points, planes, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection } = buildSectionPayload(a, b, corridor);
@@ -6453,16 +6463,18 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     // of a freeform typed name (see SectionWindow.jsx's finishContact comment for why: a contact tied
     // to an actual litho unit, tagged as that unit's upper contact, is what #98 needs to feed drawn
     // contacts into 3D surface generation as real interface points later).
-    openSectionWindow({ id, title: name, section: { ax: a.x, ay: a.y, bx: b.x, by: b.y, azimuth, corridor }, holes, intervals, points, planes, contacts: [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection,
+    const sectionImgs = await sectionImagesFor(a, b, corridor);
+    openSectionWindow({ id, title: name, section: { ax: a.x, ay: a.y, bx: b.x, by: b.y, azimuth, corridor }, holes, intervals, points, planes, contacts: [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection, sectionImages: sectionImgs,
       ghostStrings: ghostStrings({ id, ax: a.x, ay: a.y, bx: b.x, by: b.y }, sections) }); // #519
   };
 
-  const reopenSection = useCallback((s) => {
+  const reopenSection = useCallback(async (s) => {
     const a = { x: s.ax, y: s.ay }, b = { x: s.bx, y: s.by };
     const { holes, intervals, points, planes, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection } = buildSectionPayload(a, b, s.corridor, s.scope || {});
-    openSectionWindow({ id: s.id, title: s.name, section: { ax: s.ax, ay: s.ay, bx: s.bx, by: s.by, azimuth: s.azimuth, corridor: s.corridor }, holes, intervals, points, planes, contacts: s.contacts || [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection,
+    const sectionImgs = await sectionImagesFor(a, b, s.corridor);
+    openSectionWindow({ id: s.id, title: s.name, section: { ax: s.ax, ay: s.ay, bx: s.bx, by: s.by, azimuth: s.azimuth, corridor: s.corridor }, holes, intervals, points, planes, contacts: s.contacts || [], lithoUnits: litho_units, elevationProfile, legendItems, voxelSlices, surfaceTraces, plannedHoles: plannedOnSection, sectionImages: sectionImgs,
       ghostStrings: ghostStrings(s, sections) }); // #519 — the neighbouring sections' strings
-  }, [layers, layerVisible, customLayers, customVisible, assays, assayVisible, assayDisplayElements, assayStyle, isRowVisible, effectiveColor, effectiveLabel, numericLayerColor, litho_units, terrain, voxelModels, implicitSurfaces, plannedHoles, sections]);
+  }, [layers, layerVisible, customLayers, customVisible, assays, assayVisible, assayDisplayElements, assayStyle, isRowVisible, effectiveColor, effectiveLabel, numericLayerColor, litho_units, terrain, voxelModels, implicitSurfaces, plannedHoles, sections, sectionImages]);
 
   // TASKS.csv #393 — sections defined by numbers rather than two clicks: saved to the Cross-sections list
   // (same shape as a drawn one) and opened at once.
