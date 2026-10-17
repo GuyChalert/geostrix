@@ -6,7 +6,8 @@ import { parseOMF, omfVolumeToCells } from "./omf.js";
 import { cellValueRange } from "./voxel.js";
 import { logStops, SEQUENTIAL_ANCHORS } from "./inversion.js";
 
-export async function omfToProjectObjects(arrayBuffer, maxCells) {
+// attribute: the cell attribute to show when a volume carries several (e.g. two inversion iterations); null = the first.
+export async function omfToProjectObjects(arrayBuffer, maxCells, { attribute = null } = {}) {
   const project = await parseOMF(arrayBuffer);
   const omfObjects = [], voxelModels = [], skipped = [], notes = [];
   for (const el of project.elements) {
@@ -16,7 +17,8 @@ export async function omfToProjectObjects(arrayBuffer, maxCells) {
       omfObjects.push({ name: el.name, description: el.description, kind: el.kind, color: hex, origin: el.origin, vertices: el.vertices, segments: el.segments, triangles: el.triangles, attributes: el.attributes });
     } else if (el.kind === "volume") {
       // #159 — a large real block model is coarsened (block-averaged) to the cell budget so it can't hang the 3D view
-      const { cells, attrName, availableAttrs, coarsenNote, colormap, air } = omfVolumeToCells(el, null, maxCells);
+      const pick = attribute && (el.attributes || []).some((a) => a.name === attribute) ? attribute : null;
+      const { cells, attrName, availableAttrs, coarsenNote, colormap, air } = omfVolumeToCells(el, pick, maxCells);
       if (!cells.length) {
         skipped.push(`${el.name} (volume has no numeric cell attribute to render${availableAttrs?.length ? ` — found: ${availableAttrs.join(", ")}, none usable` : ""})`);
         continue;

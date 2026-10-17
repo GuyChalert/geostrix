@@ -65,7 +65,8 @@ export async function loadWoodjamExtras(readFile, store, { projectEpsg = WOODJAM
     notes.push(`Woodjam assays: ${rows.length.toLocaleString()} samples, ${elements.length} elements (ALS four-acid ICP-MS; Cu above 10,000 ppm from the ore-grade re-assay) — in the Geochem tab.`);
   } catch (e) { notes.push(`Woodjam assays could not be loaded: ${e.message}`); }
   try {
-    const res = await omfToProjectObjects(await (await readFile("ztem_inversion_2023.omf")).arrayBuffer(), maxCells);
+    // the OMF holds two inversion iterations (m_03_01, m_05_03); m_05_03 is the final model (Matt, 2026-10-17)
+    const res = await omfToProjectObjects(await (await readFile("ztem_inversion_2023.omf")).arrayBuffer(), maxCells, { attribute: "Woodjam_ZTEM_m_05_03" });
     res.omfObjects.forEach((o) => store.addOmfObject?.(o));
     // The model fills the whole property, so at full range the view opens inside a wall of blocks. It starts showing
     // only the most conductive 15% of cells, half transparent, around the drilling; the legend in the Geophysics tab
