@@ -37,12 +37,13 @@ const SHORTCUT_GROUPS = [
     items: [
       ["Ctrl/Cmd+1", "3D View"],
       ["Ctrl/Cmd+2", "3D Modeling"],
-      ["Ctrl/Cmd+3", "Geochem"],
-      ["Ctrl/Cmd+4", "Geophysics"],
-      ["Ctrl/Cmd+5", "Targeting"],
-      ["Ctrl/Cmd+6", "Raster"],
-      ["Ctrl/Cmd+7", "Cartography"],
-      ["Ctrl/Cmd+8", "Layout"], // #565 — in tab order
+      ["Ctrl/Cmd+3", "Predictive"], // #638
+      ["Ctrl/Cmd+4", "Geochem"],
+      ["Ctrl/Cmd+5", "Geophysics"],
+      ["Ctrl/Cmd+6", "Targeting"],
+      ["Ctrl/Cmd+7", "Raster"],
+      ["Ctrl/Cmd+8", "Cartography"],
+      ["Ctrl/Cmd+9", "Layout"], // #565 — in tab order
     ],
   },
   {
