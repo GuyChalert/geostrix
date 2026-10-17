@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { writeThirdPartyLicenses } from "./scripts/third-party-licenses.mjs"; // TASKS.csv #639
 
 // TASKS.csv #633 — PDF.js (lazy-loaded for PDF section images) fetches its image decoders (JBIG2 / JPEG 2000 /
 // colour profiles — common in scanned report PDFs) and the 14 standard PDF fonts at run time. They are copied
@@ -66,7 +67,7 @@ function cspPlugin() {
 }
 
 export default defineConfig({
-  plugins: [react(), cspPlugin(), { name: "geostrix-pdfjs-assets", config: copyPdfjsAssets }],
+  plugins: [react(), cspPlugin(), { name: "geostrix-pdfjs-assets", config: copyPdfjsAssets }, { name: "geostrix-third-party-licenses", config: () => { try { writeThirdPartyLicenses(); } catch (e) { console.warn(`third-party licences not written: ${e.message}`); } } }],
   base: "./",
   server: { port: 5173, strictPort: true },
   build: {

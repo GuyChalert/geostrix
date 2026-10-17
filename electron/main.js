@@ -1121,6 +1121,7 @@ function buildMenu() {
         // different tab.
         { type: "separator" },
         { label: "Report a Problem…", click: () => mainWindow?.webContents.send("menu", "report-problem") }, // TASKS.csv #598
+        { label: "Third-party Licences…", click: () => mainWindow?.webContents.send("menu", "licenses") }, // TASKS.csv #639
         { label: "About GeoStrix", click: () => mainWindow?.webContents.send("menu", "about") },
       ],
     },

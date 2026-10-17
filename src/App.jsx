@@ -29,6 +29,7 @@ const CartographyModule = React.lazy(() => import("./modules/CartographyModule.j
 // everything else, already loaded regardless) into the eagerly-loaded main bundle for no benefit.
 const ShortcutsModal = React.lazy(() => import("./components/ShortcutsModal.jsx")); // TASKS.csv #476
 const ReportProblemModal = React.lazy(() => import("./components/ReportProblemModal.jsx")); // TASKS.csv #598
+const LicensesModal = React.lazy(() => import("./components/LicensesModal.jsx")); // TASKS.csv #639
 const ProjectCrsModal = React.lazy(() => import("./components/ProjectCrsModal.jsx")); // TASKS.csv #615
 const ProjectReportModal = React.lazy(() => import("./components/ProjectReportModal.jsx"));
 
@@ -97,6 +98,7 @@ export default function App() {
   // TASKS.csv #598 — Help > Report a problem: { screenshot, crashed } while open; the window is captured BEFORE the
   // dialog opens, so the picture shows the problem, not the dialog
   const [reportProblem, setReportProblem] = useState(null);
+  const [licensesOpen, setLicensesOpen] = useState(false); // #639
   const [lastExitUnclean, setLastExitUnclean] = useState(false);
   const openReportProblem = async (crashed = false) => {
     let screenshot = null;
@@ -263,6 +265,7 @@ Your work is still open. Try saving to a different folder (a full disk, a read-o
       else if (action === "shortcuts") setShortcutsTab("shortcuts");
       else if (action === "about") setShortcutsTab("about");
       else if (action === "report-problem") openReportProblem(); // #598
+      else if (action === "licenses") setLicensesOpen(true); // #639
       else if (action === "undo") undo();
       else if (action === "redo") redo();
     });
@@ -463,6 +466,7 @@ Your work is still open. Try saving to a different folder (a full disk, a read-o
 
       <StatusBar onEpsg={() => requestProjectCrs()} pyStatus={pyStatus} updater={updater} onHelp={() => setShortcutsTab("shortcuts")} onPython={() => setShortcutsTab("python")} />
       {crsRequest && <Suspense fallback={null}><ProjectCrsModal reason={crsRequest.reason} points={crsRequest.points} onDone={finishCrsRequest} /></Suspense>}
+      {licensesOpen && <Suspense fallback={null}><LicensesModal onClose={() => setLicensesOpen(false)} /></Suspense>}
       {reportProblem && <Suspense fallback={null}><ReportProblemModal screenshot={reportProblem.screenshot} crashed={reportProblem.crashed} onClose={() => setReportProblem(null)} /></Suspense>}
       {shortcutsTab && <Suspense fallback={null}><ShortcutsModal initialTab={shortcutsTab} pyStatus={pyStatus} onClose={() => setShortcutsTab(null)} /></Suspense>}
       {reportOpen && (
