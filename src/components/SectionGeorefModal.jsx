@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { X, Upload, Trash2, MapPin } from "./icons.js";
+import { X, Upload, Trash2 } from "./icons.js";
+import ImageTiePointCanvas from "./ImageTiePointCanvas.jsx";
 import { sectionLine, fitSectionTransform, sectionResiduals, sectionImageCorners, sectionFitSummary } from "../lib/sectionGeoref.js";
 import { useEscapeKey } from "../lib/useEscapeKey.js";
 import { useFocusTrap } from "../lib/useFocusTrap.js";
@@ -33,7 +34,6 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef(null);
-  const canvasRef = useRef(null);
   // TASKS.csv #633 — a PDF: { doc, name, thumbs, numPages } while its page is being picked
   const [pdf, setPdf] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(null); // status text while PDF.js works
@@ -41,8 +41,6 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
   const pdfDocRef = useRef(null);
   useEffect(() => () => { pdfDocRef.current?.destroy?.(); }, []);
 
-  const scale = img ? Math.min(1, DISPLAY_MAX / Math.max(img.width, img.height)) : 1;
-  const dispW = img ? Math.round(img.width * scale) : 0, dispH = img ? Math.round(img.height * scale) : 0;
 
   const loadPdf = async (file) => {
     setError(null); setImg(null); setPoints([]);
@@ -107,11 +105,6 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
   const rmse = res && res.length > 2 ? Math.sqrt(res.reduce((s, r) => s + r.error ** 2, 0) / res.length) : null;
   const summary = fit && img ? sectionFitSummary(fit, img.width, img.height) : null;
 
-  const onCanvasClick = (e) => {
-    if (!img) return;
-    const r = canvasRef.current.getBoundingClientRect();
-    setPoints((p) => [...p, { id: `sp_${Date.now()}_${p.length}`, px: Math.round((e.clientX - r.left) / scale), py: Math.round((e.clientY - r.top) / scale), h: "", z: "" }]);
-  };
   const updatePoint = (id, patch) => setPoints((p) => p.map((pt) => (pt.id === id ? { ...pt, ...patch } : pt)));
 
   const doImport = () => {
@@ -174,17 +167,9 @@ export default function SectionGeorefModal({ sections = [], onImport, onClose })
               </div>
             )}
             {img ? (
-              <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={onCanvasClick} aria-label="Click to add a control point"
-                style={{ position: "relative", width: dispW, height: dispH, cursor: "crosshair", border: "1px solid var(--color-border)", background: "#ececec" }}>
-                <canvas width={dispW} height={dispH} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-                  ref={(cv) => { canvasRef.current = cv; if (cv) { const ctx = cv.getContext("2d"); ctx.clearRect(0, 0, dispW, dispH); ctx.drawImage(img.bitmap, 0, 0, dispW, dispH); } }} />
-                {points.map((p, i) => (
-                  <div key={p.id} style={{ position: "absolute", left: p.px * scale - 8, top: p.py * scale - 16, pointerEvents: "none" }}>
-                    <MapPin size={18} fill="#d9534f" color="#8a1f1b" />
-                    <span style={{ position: "absolute", left: 16, top: 0, fontSize: "var(--font-size-xs)", background: "var(--color-bg)", padding: "0 3px", borderRadius: 3, color: "var(--color-text)" }}>{i + 1}</span>
-                  </div>
-                ))}
-              </div>
+              <ImageTiePointCanvas image={img} points={points} maxSize={DISPLAY_MAX} // TASKS.csv #632 — zoom / pan / drag points
+                onAdd={(px, py) => setPoints((p) => [...p, { id: `sp_${Date.now()}_${p.length}`, px, py, h: "", z: "" }])}
+                onMove={(id, px, py) => updatePoint(id, { px, py })} />
             ) : pdf ? null : (
               <div style={{ width: DISPLAY_MAX, maxWidth: "100%", height: 360, border: "1px dashed var(--color-border-light)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-muted)", fontSize: "var(--font-size-base)", textAlign: "center", padding: 12 }}>
                 Load the section figure — a page of a PDF report, or a PNG/JPG. Tip: points where labelled grid lines cross (an elevation line and a distance or easting tick) are the easiest to read.
