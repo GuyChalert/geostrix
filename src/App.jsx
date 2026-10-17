@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { requestModuleAction } from "./lib/menuRequests.js"; // TASKS.csv #565
 import { onProjectCrsRequest, requestProjectCrs } from "./lib/projectCrsRequest.js"; // TASKS.csv #615
-import { FileDown, Box, FlaskConical, Radio, Layout, Save, FolderOpen, FilePlus2, RotateCcw, X, Undo2, Redo2, Plus, Image, Layers3, Target, FileBarChart2, Globe2 } from "./components/icons.js";
+import { FileDown, Box, FlaskConical, Radio, Layout, Save, FolderOpen, FilePlus2, RotateCcw, X, Undo2, Redo2, Plus, Image, Layers3, Target, FileBarChart2, Globe2, Sparkles } from "./components/icons.js";
 import { crsName } from "./lib/reproject.js"; // TASKS.csv #485
 import { useStore, useCursorValue, useTaskProgressValue, FreezeStore } from "./lib/store.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx"; // TASKS.csv #442
@@ -50,6 +50,7 @@ const ProjectReportModal = React.lazy(() => import("./components/ProjectReportMo
 const MODULES = [
   { id: "viewer", label: "3D View", icon: Box },
   { id: "modeling", label: "3D Modeling", icon: Layers3 },
+  { id: "predictive", label: "Predictive", icon: Sparkles }, // TASKS.csv #638 — geoML add-on, results compared in the 3D view
   { id: "geochem", label: "Geochem", icon: FlaskConical },
   { id: "geophysics", label: "Geophysics", icon: Radio },
   { id: "targeting", label: "Targeting", icon: Target },
@@ -65,7 +66,7 @@ const MODULES = [
 // mounted (hidden via CSS, not unmounted) across all three instead of three separate conditional JSX
 // expressions each occupying their own position in the render tree (which is what forced the
 // unmount/remount in the first place).
-const VIEWER_MODES = { viewer: "view", modeling: "modeling", targeting: "targeting" };
+const VIEWER_MODES = { viewer: "view", modeling: "modeling", targeting: "targeting", predictive: "predictive" };
 
 export default function App() {
   const store = useStore();

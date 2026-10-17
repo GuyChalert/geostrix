@@ -67,6 +67,15 @@
       {
         "from": "sample_data",
         "to": "sample_data"
+      },
+      {
+        "from": "addons",
+        "to": "addons",
+        "filter": [
+          "*/release.json",
+          "*/LICENSE",
+          "*/README.md"
+        ]
       }
     ],
     "publish": {

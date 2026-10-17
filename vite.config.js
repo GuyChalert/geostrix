@@ -53,7 +53,7 @@ function cspPlugin() {
           "style-src 'self' 'unsafe-inline'",
           `img-src 'self' data: blob: ${TILE_HOSTS}`,
           "font-src 'self' data:",
-          `connect-src 'self' data: blob: http://127.0.0.1:8765 ${TILE_HOSTS}`,
+          `connect-src 'self' data: blob: http://127.0.0.1:8765 http://127.0.0.1:8766 ${TILE_HOSTS}`,
           "worker-src 'self' blob:",
           "object-src 'none'",
           "base-uri 'self'",

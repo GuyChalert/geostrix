@@ -1,0 +1,73 @@
+// TASKS.csv #638 — the renderer's side of the predictive-modelling add-on (addons/geoml, geoML, GPL-3.0): install /
+// status through the desktop bridge (electron/addons.js), then jobs over the add-on's local API (127.0.0.1:8766) with the
+// per-launch token. Without the desktop app (browser preview) a developer can run the add-on by hand on 8766 with no
+// token, and this talks to it directly.
+const d = typeof window !== "undefined" ? window.desktop : null;
+const ID = "geoml";
+const DEFAULT_PORT = 8766;
+
+export const addonDesktop = !!d?.addonStatus;
+export async function addonStatus() {
+  if (d?.addonStatus) return d.addonStatus(ID);
+  try { const r = await fetch(`http://127.0.0.1:${DEFAULT_PORT}/health`, { signal: AbortSignal.timeout(1500) }); return { id: ID, available: true, installed: r.ok, running: r.ok, dev: true }; }
+  catch { return { id: ID, available: true, installed: false, running: false, browser: true }; }
+}
+export const addonInstall = () => (d?.addonInstall ? d.addonInstall(ID) : Promise.resolve({ ok: false, error: "Installing add-ons needs the desktop app." }));
+export const addonCancelInstall = () => d?.addonCancelInstall?.(ID);
+export const addonUninstall = () => d?.addonUninstall?.(ID);
+export const onAddonEvent = (cb) => (d?.onAddonEvent ? d.onAddonEvent((ev) => { if (ev.id === ID) cb(ev); }) : () => {});
+
+let conn = null;
+async function connection() {
+  if (!d?.addonEnsure) return { port: DEFAULT_PORT, token: null };
+  const e = await d.addonEnsure(ID);
+  if (!e.ok) throw new Error(e.error || "The predictive-modelling add-on could not start.");
+  conn = await d.addonConnection(ID);
+  return conn;
+}
+
+async function call(path, { method = "GET", body, timeoutMs = 30000 } = {}) {
+  const c = conn || (await connection());
+  const res = await fetch(`http://127.0.0.1:${c.port}${path}`, {
+    method, headers: { "Content-Type": "application/json", ...(c.token ? { "X-GeoStrix-Token": c.token } : {}) },
+    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(timeoutMs),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(json.detail || `The add-on answered HTTP ${res.status}.`), { status: res.status, body: json });
+  return json;
+}
+
+// Starts the add-on if needed and waits until it answers (first start: Windows may scan the new files for a while).
+export async function addonReady(onWait, maxMs = 120000) {
+  conn = null;
+  const c = await connection();
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${c.port}/health`, { signal: AbortSignal.timeout(2000) });
+      if (r.ok) return r.json();
+    } catch { /* not up yet */ }
+    if (Date.now() - t0 > maxMs) throw new Error("The predictive-modelling add-on didn't start within two minutes. Its log is in GeoStrix's settings folder (addons/geoml/addon.log).");
+    onWait?.(Math.round((Date.now() - t0) / 1000));
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+export const startJob = (kind, params) => call("/v1/jobs", { method: "POST", body: { kind, params }, timeoutMs: 60000 });
+export const jobStatus = (id) => call(`/v1/jobs/${encodeURIComponent(id)}`, { timeoutMs: 10000 });
+export const jobResult = (id) => call(`/v1/jobs/${encodeURIComponent(id)}/result`, { timeoutMs: 120000 });
+export const cancelJob = (id) => call(`/v1/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: {}, timeoutMs: 10000 });
+
+// Runs a job to the end: onProgress({ progress, message, elapsed }) every second; resolves with the result.
+export async function runJob(kind, params, onProgress, signal) {
+  const job = await startJob(kind, params);
+  for (;;) {
+    if (signal?.aborted) { await cancelJob(job.id).catch(() => {}); throw new Error("Cancelled."); }
+    await new Promise((r) => setTimeout(r, 1000));
+    const s = await jobStatus(job.id);
+    onProgress?.(s);
+    if (s.state === "done") return jobResult(job.id);
+    if (s.state === "error") throw new Error(s.error || "The model failed.");
+    if (s.state === "cancelled") throw new Error("Cancelled.");
+  }
+}

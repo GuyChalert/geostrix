@@ -130,6 +130,7 @@ export const Square = memoIcon(L.Square);
 export const SquareSplitVertical = memoIcon(L.SquareSplitVertical);
 export const Star = memoIcon(L.Star);
 export const Target = memoIcon(L.Target);
+export const Sparkles = memoIcon(L.Sparkles); // TASKS.csv #638 — the Predictive tab
 export const TerminalSquare = memoIcon(L.TerminalSquare);
 export const Trash2 = memoIcon(L.Trash2);
 export const Triangle = memoIcon(L.Triangle);

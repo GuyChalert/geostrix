@@ -5,6 +5,15 @@ contextBridge.exposeInMainWorld("desktop", {
   getSidecarToken: () => ipcRenderer.invoke("sidecar-token"), // TASKS.csv #321
   ensureSidecar: () => ipcRenderer.invoke("sidecar-ensure"), // TASKS.csv #440
   isSidecarRunning: () => ipcRenderer.invoke("sidecar-running"), // TASKS.csv #440
+  // TASKS.csv #638 — optional add-ons
+  addonStatus: (id) => ipcRenderer.invoke("addon-status", id),
+  addonInstall: (id) => ipcRenderer.invoke("addon-install", id),
+  addonCancelInstall: (id) => ipcRenderer.invoke("addon-cancel-install", id),
+  addonUninstall: (id) => ipcRenderer.invoke("addon-uninstall", id),
+  addonEnsure: (id) => ipcRenderer.invoke("addon-ensure", id),
+  addonConnection: (id) => ipcRenderer.invoke("addon-connection", id),
+  addonStop: (id) => ipcRenderer.invoke("addon-stop", id),
+  onAddonEvent: (cb) => { const h = (_e, ev) => cb(ev); ipcRenderer.on("addon-event", h); return () => ipcRenderer.removeListener("addon-event", h); },
   openSectionWindow: (payload) => ipcRenderer.invoke("open-section-window", payload),
   sendSectionSnapshot: (payload) => ipcRenderer.invoke("section-snapshot", payload),
   onSectionSnapshot: (cb) => { const h = (_e, d) => cb(d); ipcRenderer.on("section-snapshot", h); return () => ipcRenderer.removeListener("section-snapshot", h); },

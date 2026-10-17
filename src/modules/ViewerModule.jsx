@@ -58,6 +58,7 @@ const DataQCModal = lazyModal(() => import("../components/DataQCModal.jsx"));  /
 const SQLWorkspaceModal = React.lazy(() => import("../components/SQLWorkspaceModal.jsx"));
 const SectionGeorefModal = React.lazy(() => import("../components/SectionGeorefModal.jsx")); // TASKS.csv #630
 const LayerStyleModal = React.lazy(() => import("../components/LayerStyleModal.jsx")); // TASKS.csv #635
+const PredictivePanel = React.lazy(() => import("../components/PredictivePanel.jsx")); // TASKS.csv #638
 const BoundaryInterceptsModal = lazyModal(() => import("../components/BoundaryInterceptsModal.jsx"));  // TASKS.csv #301
 const StripLog = lazyModal(() => import("../components/StripLog.jsx"));  // TASKS.csv #301
 const StereonetModal = lazyModal(() => import("../components/StereonetModal.jsx"));  // TASKS.csv #301
@@ -1214,7 +1215,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   // switcher). Now that View and Modeling are separate top-level modules, which content shows is
   // dictated entirely by the `mode` prop App.jsx passes in — kept as a local alias so the render code
   // below (`sidebarTab === "home"` / `=== "modeling"`) didn't need a mechanical find/replace.
-  const sidebarTab = mode === "modeling" ? "modeling" : mode === "targeting" ? "targeting" : "home";
+  const sidebarTab = mode === "modeling" ? "modeling" : mode === "targeting" ? "targeting" : mode === "predictive" ? "predictive" : "home";
   // TASKS.csv #458 — the tool shown in the sidebar ("task pane") — picked from the ribbon; null = only the
   // tab's data. Targeting opens on its planned-holes pane (its main job). Reset when the tab changes.
   const [toolPane, setToolPane] = useState(mode === "targeting" ? "plan" : null);
@@ -3594,6 +3595,40 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   }, [fitBox, project?.epsg, setTaskProgress]);
 
 
+
+  // TASKS.csv #638 — a triangle mesh in world coordinates (the geoML add-on's contact surface) registered like an imported
+  // solid (#148): show / hide, remove, query, export, persistence and section intersection come with it. Optional
+  // per-vertex 0–1 values (geoML's uncertainty) colour it light (confident) → dark (uncertain) for this session; the
+  // saved surface keeps its plain colour.
+  const addWorldMeshSurface = useCallback(({ name, positions, indices, values = null, color = "#c46f2a", opacity = 0.7, params = {} }) => {
+    const o = originRef.current;
+    const scene = new Float32Array(positions.length);
+    for (let i = 0; i < positions.length; i += 3) { scene[i] = positions[i] - o.x; scene[i + 1] = positions[i + 2] - o.z; scene[i + 2] = o.y - positions[i + 1]; }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(scene, 3));
+    geo.setIndex(new THREE.BufferAttribute(indices instanceof Uint32Array ? indices : new Uint32Array(indices), 1));
+    geo.computeVertexNormals();
+    let vertexColors = false;
+    if (values && values.length === positions.length / 3) {
+      const cols = new Float32Array(positions.length), base = new THREE.Color(color), dark = new THREE.Color("#1d2b53");
+      const c = new THREE.Color();
+      for (let i = 0; i < values.length; i++) { c.copy(base).lerp(dark, Math.max(0, Math.min(1, values[i]))); cols[i * 3] = c.r; cols[i * 3 + 1] = c.g; cols[i * 3 + 2] = c.b; }
+      geo.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+      vertexColors = true;
+    }
+    const mat = new THREE.MeshLambertMaterial({ color: vertexColors ? 0xffffff : color, vertexColors, side: THREE.DoubleSide, transparent: opacity < 1, opacity });
+    const mesh = new THREE.Mesh(geo, mat);
+    const nVerts = positions.length / 3, nTris = indices.length / 3;
+    mesh.userData = { tip: `${name}
+${nVerts.toLocaleString()} vertices, ${nTris.toLocaleString()} triangles` };
+    implicitGroupRef.current?.add(mesh);
+    const id = `impl_${Date.now()}_geoml_${Math.random().toString(36).slice(2, 6)}`;
+    implicitMeshesRef.current[id] = mesh;
+    setImplicitSurfaces((p) => [...p, { id, name, visible: true, vertexCount: nVerts, faceCount: nTris, type: "geoml", relationships: [], closure: null, params: { tool: "geoML (predictive modelling add-on)", vertices: nVerts, triangles: nTris, createdAt: new Date().toISOString(), ...params } }]);
+    geo.computeBoundingBox(); mesh.updateWorldMatrix(true, false);
+    lastActivityRef.current = Date.now();
+    return id;
+  }, []);
 
   // "Project contact to depth": sweep the draped trace down-dip (mapLayers.js projectContactRibbon) and
   // register the result exactly like an imported solid (#148) — in implicitMeshesRef/implicitSurfaces —
@@ -8483,6 +8518,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => askPrompt("Domain name?", "", (name) => { if (name && name.trim()) setExpandedDomainId(addDomain(name.trim())); })} style={{ cursor: "pointer", padding: "8px 10px", background: "var(--color-bg-subtle)", border: "1px dashed var(--color-border-light)", borderRadius: 6, fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)", textAlign: "center", marginBottom: 4 }}>+ Domain</div>
         </>)}
 
+        {sidebarTab === "predictive" && ( // TASKS.csv #638
+          <Suspense fallback={null}>
+            <PredictivePanel collars={collars} survey={survey} litho={layers.litho || []} assays={assays} assayElements={assayElements}
+              addVoxelModel={addVoxelModel} addSurface={addWorldMeshSurface} setNotices={setNotices} />
+          </Suspense>
+        )}
         {sidebarTab === "targeting" && (<>
         {toolPane === "ranges" && (<>
         {paneHeader("Voxel value ranges", Box, "view")}

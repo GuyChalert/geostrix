@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, protocol, clipboard, safeStorage } = require("electron"); // session: TASKS.csv #300; shell: TASKS.csv #310; protocol: #562
+const { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, protocol, clipboard, safeStorage, net } = require("electron"); // session: TASKS.csv #300; shell: TASKS.csv #310; protocol: #562
 // User-reported bug: "there's a bug on the app that won't let me close it. I can only close it ending
 // the task" — App.jsx's beforeunload handler correctly calls e.preventDefault() when a tab has unsaved
 // changes (the standard web pattern, meant to trigger a native "leave site?" confirm), but Electron
@@ -290,6 +290,20 @@ ipcMain.handle("sidecar-token", () => SIDECAR_TOKEN);
 // without polling a port nobody is listening on.
 ipcMain.handle("sidecar-ensure", () => ({ spawned: startPythonSidecar(), running: pySidecar !== null }));
 ipcMain.handle("sidecar-running", () => pySidecar !== null);
+
+// TASKS.csv #638 — optional add-ons (electron/addons.js): the geoML predictive-modelling engine, downloaded on request,
+// checksum-pinned, started on first use with its own token. Progress goes to the renderer as "addon-event".
+const addons = require("./addons.js").createAddonManager({ app, net, send: (ev) => mainWindow?.webContents.send("addon-event", ev) });
+const ADDON_IDS = new Set(["geoml"]);
+const addonId = (id) => { if (!ADDON_IDS.has(id)) throw new Error("Unknown add-on."); return id; };
+ipcMain.handle("addon-status", (_e, id) => addons.status(addonId(id)));
+ipcMain.handle("addon-install", async (_e, id) => { try { return { ok: true, status: await addons.install(addonId(id)) }; } catch (err) { return { ok: false, error: err.message }; } });
+ipcMain.handle("addon-cancel-install", (_e, id) => addons.cancelInstall(addonId(id)));
+ipcMain.handle("addon-uninstall", (_e, id) => addons.uninstall(addonId(id)));
+ipcMain.handle("addon-ensure", (_e, id) => { try { return { ok: true, ...addons.ensure(addonId(id)) }; } catch (err) { return { ok: false, error: err.message }; } });
+ipcMain.handle("addon-connection", (_e, id) => addons.connection(addonId(id)));
+ipcMain.handle("addon-stop", (_e, id) => { addons.stop(addonId(id)); return true; });
+app.on("will-quit", () => addons.stopAll());
 
 ipcMain.handle("updater-check", async () => {
   if (!app.isPackaged) return { ok: false, message: "Update checks only run in a packaged build (see electron-updater's own requirement — there's no publish feed to check against in a dev run)." };
