@@ -3,9 +3,7 @@
 #
 # Same rules as GeoStrix's own Python engine (python-sidecar/app/main.py): 127.0.0.1 only, a per-launch token in
 # X-GeoStrix-Token (from GEOSTRIX_ADDON_TOKEN; none needed when unset, for a developer running it by hand), a Host
-# check against DNS rebinding, a request-size cap, one job at a time. Each job runs in its own process (spawn): the
-# parent never imports TensorFlow, so /health answers at once, and Cancel terminates the child, which returns every
-# byte of its memory to the system immediately.
+# check against DNS rebinding, a request-size cap, one job at a time. Jobs run in a separate worker process (below).
 import hmac
 import multiprocessing as mp
 import os
@@ -55,8 +53,11 @@ def _version(dist):
         return None
 
 
-# ---------- jobs: one child process each ----------
-def _child(kind, params, q):
+# ---------- jobs: a warm worker process ----------
+# The worker imports TensorFlow + geoML once (20-40 s) and then runs job after job, so only the first model of a
+# session pays for it. Cancel terminates the worker (every byte of its memory goes back to the system) and the next job
+# starts a fresh one. The parent never imports TensorFlow, so /health answers at once.
+def _worker(inbox, outbox):
     def watch_parent():  # the add-on server died (app quit / killed): don't live on holding gigabytes
         parent = mp.parent_process()
         while True:
@@ -64,56 +65,76 @@ def _child(kind, params, q):
             if parent is None or not parent.is_alive():
                 os._exit(0)
     threading.Thread(target=watch_parent, daemon=True).start()
-    try:
-        q.put(("progress", 0.01, "Starting TensorFlow and geoML"))
-        from geostrix_geoml import models
-        result = models.JOBS[kind](params, lambda f, text: q.put(("progress", float(f), str(text))))
-        q.put(("done", result))
-    except Exception as e:  # noqa: BLE001 — every failure goes back to GeoStrix with its message
-        q.put(("error", f"{type(e).__name__}: {e}", traceback.format_exc()[-4000:]))
+    models = None
+    while True:
+        jid, kind, params = inbox.get()
+        try:
+            if models is None:
+                outbox.put((jid, "progress", 0.01, "Starting TensorFlow and geoML (first model of the session)"))
+                from geostrix_geoml import models as _m
+                models = _m
+            result = models.JOBS[kind](params, lambda f, text, jid=jid: outbox.put((jid, "progress", float(f), str(text))))
+            outbox.put((jid, "done", result))
+        except Exception as e:  # noqa: BLE001 — every failure goes back to GeoStrix with its message
+            outbox.put((jid, "error", f"{type(e).__name__}: {e}", traceback.format_exc()[-4000:]))
 
 
 class Jobs:
     def __init__(self):
         self.jobs, self.lock = {}, threading.Lock()
+        self.proc = self.inbox = self.outbox = None
+        self.ctx = mp.get_context("spawn")
 
     def running(self):
         return next((j for j in self.jobs.values() if j["state"] == "running"), None)
 
+    def _ensure_worker(self):
+        if self.proc is not None and self.proc.is_alive():
+            return
+        self.inbox, self.outbox = self.ctx.Queue(), self.ctx.Queue()
+        self.proc = self.ctx.Process(target=_worker, args=(self.inbox, self.outbox), daemon=True)
+        self.proc.start()
+        threading.Thread(target=self._pump, args=(self.proc, self.outbox), daemon=True).start()
+
     def start(self, kind, params):
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
-        proc = ctx.Process(target=_child, args=(kind, params, q), daemon=True)
-        jid = uuid.uuid4().hex[:12]
-        job = {"id": jid, "kind": kind, "state": "running", "progress": 0.0, "message": "Queued", "started": time.time(), "proc": proc, "q": q, "result": None, "error": None}
         with self.lock:
+            self._ensure_worker()
+            jid = uuid.uuid4().hex[:12]
+            job = {"id": jid, "kind": kind, "state": "running", "progress": 0.0, "message": "Queued", "started": time.time(), "result": None, "error": None}
             self.jobs[jid] = job
-        proc.start()
-        threading.Thread(target=self._pump, args=(job,), daemon=True).start()
+            self.inbox.put((jid, kind, params))
         return job
 
-    def _pump(self, job):
-        while job["state"] == "running":
+    def _pump(self, proc, outbox):
+        while True:
             try:
-                msg = job["q"].get(timeout=1)
+                msg = outbox.get(timeout=1)
             except queue.Empty:
-                if not job["proc"].is_alive():
-                    job.update(state="error", error="The modelling process stopped unexpectedly (out of memory?).")
+                if not proc.is_alive():
+                    for j in self.jobs.values():
+                        if j["state"] == "running":
+                            j.update(state="error", error="The modelling process stopped unexpectedly (out of memory?).")
+                    return
                 continue
-            if msg[0] == "progress":
-                job["progress"], job["message"] = msg[1], msg[2]
-            elif msg[0] == "done":
-                job.update(state="done", result=msg[1], progress=1.0, message="Done")
-            elif msg[0] == "error":
-                job.update(state="error", error=msg[1], trace=msg[2])
-        job["proc"].join(timeout=5)
+            job = self.jobs.get(msg[0])
+            if not job or job["state"] != "running":
+                continue
+            if msg[1] == "progress":
+                job["progress"], job["message"] = msg[2], msg[3]
+            elif msg[1] == "done":
+                job.update(state="done", result=msg[2], progress=1.0, message="Done")
+            elif msg[1] == "error":
+                job.update(state="error", error=msg[2], trace=msg[3])
 
     def cancel(self, jid):
         job = self.jobs.get(jid)
         if not job or job["state"] != "running":
             return False
-        job["proc"].terminate()
         job.update(state="cancelled", message="Cancelled")
+        with self.lock:
+            if self.proc is not None:
+                self.proc.terminate()
+                self.proc = None
         return True
 
 
@@ -126,8 +147,8 @@ def _public(job):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "addon": "geoml", "version": ADDON_VERSION, "geoml": _version("geoml"), "tensorflow": _version("tensorflow"),
-            "busy": manager.running() is not None}
+    return {"ok": True, "addon": "geoml", "version": ADDON_VERSION, "geoml": _version("geoml"), "busy": manager.running() is not None,
+            "warm": manager.proc is not None and manager.proc.is_alive()}
 
 
 @app.post("/v1/jobs")
