@@ -1,5 +1,7 @@
 # CLAUDE.md — working notes for Claude Code on GeoStrix
 
+**This is a fork of another project so DO NOT EVER COMMIT TO THE ORIGINAL REMOTE REPO: only commit and push to https://github.com/GuyChalert/geostrix.git**
+
 This file is for you (Claude, working in this repo via Claude Code). It's project-specific
 memory: read it at the start of every session before touching code. `README.md` is the
 user-facing doc (install/run/build); this file is the *how work actually gets done here* doc.

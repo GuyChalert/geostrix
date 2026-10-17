@@ -47,6 +47,12 @@ bash scripts/termux/run.sh --dev    # Vite dev server + Electron, with live relo
 launches Electron in the container. Switch back to Termux to see the log; quit the app from its menu or with
 Ctrl+C in Termux.
 
+The window always covers the whole Termux:X11 screen, and follows it when the screen changes size: rotate the
+device, or change the resolution in the Termux:X11 preferences, and the app re-fits within a second. For the
+screen to follow portrait/landscape rotation, leave Termux:X11's *Display resolution mode* on **native** (the
+default); a fixed **exact** or **custom** resolution stays the same size whichever way the device is held. To
+manage the window yourself instead (a VNC desktop with a window manager), start with `GEOSTRIX_FIT_SCREEN=0`.
+
 Touch works as a mouse: drag to rotate the 3D view. A Bluetooth or USB mouse and keyboard make the app much
 easier to use.
 

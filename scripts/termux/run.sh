@@ -13,6 +13,10 @@
 # LIBGL_DRI3_DISABLE=1: Termux:X11 advertises DRI3, so Mesa's GLX takes the DRI3/Present path with llvmpipe and
 # never gets its buffer back — glxinfo hangs, and Electron's GPU process blocks, leaving a black window and a
 # page that answers nothing (2026-10-17). Without DRI3 Mesa falls back to plain X images, which works.
+# GEOSTRIX_FIT_SCREEN=1 (#649): Termux:X11 has no window manager, so electron/main.js keeps the window covering the
+# whole X screen itself, and re-fits it when the screen changes size. With Termux:X11's "native" resolution mode the
+# screen follows the device's portrait/landscape rotation. GEOSTRIX_FIT_SCREEN=0 turns this off (e.g. a VNC desktop
+# with its own window manager).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP="${TMPDIR:-/data/data/com.termux/files/usr/tmp}"
@@ -42,7 +46,7 @@ fi
 
 # shellcheck disable=SC2016  # expanded inside the container
 inner='set -e
-export DISPLAY="$GEOSTRIX_DISPLAY" LIBGL_DRI3_DISABLE=1
+export DISPLAY="$GEOSTRIX_DISPLAY" LIBGL_DRI3_DISABLE=1 GEOSTRIX_FIT_SCREEN
 [ -x python-sidecar/venv/bin/python ] && export GEOSTRIX_PYTHON="$PWD/python-sidecar/venv/bin/python"
 flags="--no-sandbox --ignore-gpu-blocklist $GEOSTRIX_ELECTRON_FLAGS"
 if [ "$GEOSTRIX_MODE" = dev ]; then
@@ -51,10 +55,12 @@ fi
 [ -f dist/index.html ] || npm run build:web
 exec npx electron . $flags $GEOSTRIX_ARGS'
 
-export GEOSTRIX_MODE="$mode" GEOSTRIX_ARGS="${args[*]-}" GEOSTRIX_ELECTRON_FLAGS="${GEOSTRIX_ELECTRON_FLAGS-}"
+export GEOSTRIX_MODE="$mode" GEOSTRIX_ARGS="${args[*]-}" GEOSTRIX_ELECTRON_FLAGS="${GEOSTRIX_ELECTRON_FLAGS-}" \
+  GEOSTRIX_FIT_SCREEN="${GEOSTRIX_FIT_SCREEN-1}"
 CONTAINER="${GEOSTRIX_CONTAINER:-geostrix}"
 REPO="$(cd "$HERE/../.." && pwd)"
 exec proot-distro login "$CONTAINER" --no-arch-warning --shared-tmp --bind "$REPO:/geostrix" --work-dir /geostrix \
   --env "GEOSTRIX_DISPLAY=$GEOSTRIX_DISPLAY" --env "GEOSTRIX_MODE=$GEOSTRIX_MODE" \
   --env "GEOSTRIX_ARGS=$GEOSTRIX_ARGS" --env "GEOSTRIX_ELECTRON_FLAGS=$GEOSTRIX_ELECTRON_FLAGS" \
+  --env "GEOSTRIX_FIT_SCREEN=$GEOSTRIX_FIT_SCREEN" \
   -- /bin/bash -c "$inner"

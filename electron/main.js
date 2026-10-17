@@ -379,6 +379,34 @@ async function loadMainWindow(win) {
   if (!win.isDestroyed()) return win.loadURL(resolveUrl("/")).catch((err) => console.error("[load]", err));
 }
 
+// TASKS.csv #649 — Termux:X11 has no window manager: nothing maximizes the window, and when the X screen changes size
+// (the device rotates, or the Termux:X11 resolution/scale preference changes) nothing resizes it, so a fixed 1440x900
+// left blank strips on a 2120x960 landscape screen and ran off the edge of a portrait one. scripts/termux/run.sh sets
+// GEOSTRIX_FIT_SCREEN=1; the window then always covers the primary display exactly. The 1024x640 minimum is dropped
+// too, or a portrait or down-scaled screen narrower than 1024 would still push the window past the edge.
+function fitWindowToScreen(win) {
+  const { screen } = require("electron");
+  win.setMinimumSize(1, 1);
+  const fit = () => {
+    if (win.isDestroyed()) return;
+    // one row taller than the screen: Chromium's X11 window shrinks bounds that EQUAL the screen's by 1 px each way
+    // (so a window manager won't take it for a fullscreen window), which left a 1 px blank strip right and bottom;
+    // measured 1079x2123 on a 1080x2124 screen, and setFullScreen does the same. Only the bottom 1 px row is lost.
+    const s = screen.getPrimaryDisplay().bounds;
+    const b = { x: s.x, y: s.y, width: s.width, height: s.height + 1 };
+    const cur = win.getBounds();
+    if (cur.x !== b.x || cur.y !== b.y || cur.width !== b.width || cur.height !== b.height) win.setBounds(b);
+  };
+  // the root window is resized in steps while Termux:X11 rotates; fit once it settles, and again a moment later
+  // in case the last RandR event arrived before the final size
+  let timer = null;
+  const refit = () => { clearTimeout(timer); timer = setTimeout(() => { fit(); setTimeout(fit, 500); }, 150); };
+  fit();
+  win.once("ready-to-show", fit);
+  for (const ev of ["display-metrics-changed", "display-added", "display-removed"]) screen.on(ev, refit);
+  win.on("closed", () => { clearTimeout(timer); for (const ev of ["display-metrics-changed", "display-added", "display-removed"]) screen.off(ev, refit); });
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -403,6 +431,7 @@ function createMainWindow() {
       sandbox: true,
     },
   });
+  if (process.env.GEOSTRIX_FIT_SCREEN === "1") fitWindowToScreen(mainWindow); // #649 — Termux:X11
   loadMainWindow(mainWindow); // #562 — app:// (and the one-time localStorage move)
   // TASKS.csv #310 — external links (the repository / licence links on the About tab, and the
   // existing "get a Tracestrack key" link in LayerPicker) must open in the user's OWN browser, not
