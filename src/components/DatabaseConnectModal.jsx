@@ -141,16 +141,16 @@ export default function DatabaseConnectModal({ onCancel, onResults }) {
           <div id="db-pw-note" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--font-size-sm)", color: "var(--color-text-secondary)", marginTop: 6 }}>
             {pw.saved ? (
               <>
-                <span style={{ flex: 1 }}>A password is saved on this computer for this login (encrypted with your Windows account). Leave the box empty to use it.</span>
+                <span style={{ flex: 1 }}>A password is saved on this computer for this login (encrypted by your operating-system account). Leave the box empty to use it.</span>
                 <button type="button" onClick={forgetPassword} style={{ background: "none", border: "1px solid var(--color-border)", borderRadius: 4, padding: "2px 8px", cursor: "pointer", color: "var(--color-text-secondary)" }}>Forget it</button>
               </>
             ) : pw.available ? (
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 6 }} title="Kept encrypted by the operating system (Windows: only your Windows account on this computer can read it), in GeoStrix's own settings folder — never in the project file. Untick and use Forget to remove it.">
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 6 }} title="Kept encrypted by the operating system (Windows: only your Windows account on this computer can read it; Linux: your keyring), in GeoStrix's own settings folder — never in the project file. Untick and use Forget to remove it.">
                 <input type="checkbox" checked={!!config.rememberPassword} onChange={(e) => set("rememberPassword", e.target.checked)} style={{ marginTop: 2 }} />
                 <span>Remember the password on this computer (encrypted, never in the project file)</span>
               </label>
             ) : (
-              <span>The password is used for this session only (remembering it needs the desktop app with an OS key store).</span>
+              <span>The password is used for this session only (remembering it needs the desktop app with an OS key store — on Linux, a running keyring such as GNOME Keyring or KWallet).</span>
             )}
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--font-size-base)", color: "var(--color-text-secondary)", marginTop: 6, marginBottom: 10 }}>

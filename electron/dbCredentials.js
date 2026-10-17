@@ -8,10 +8,16 @@
 //    the renderer only learns WHETHER one is saved, and the main process fills it in at connect time.
 //  * if safeStorage can't encrypt (no OS key store), nothing is saved — no plain-text fallback.
 //  * keyed by engine | host | port | database | user, so a saved password is used only for exactly that login.
+// TASKS.csv #640 — on Linux with no secret service (no keyring: headless, some window managers, Termux/proot)
+// Chromium picks its "basic_text" backend, which encrypts with a hardcoded key, and isEncryptionAvailable() still
+// says true. That is a plain-text fallback in all but name, so on Linux the backend must be a real key store.
 const fs = require("fs");
 const path = require("path");
 
-function createDbCredentialStore({ safeStorage, dir }) {
+// getSelectedStorageBackend() is Linux-only; "unknown" means asked before app ready, so fail closed on it too.
+const WEAK_LINUX_BACKENDS = new Set(["basic_text", "unknown"]);
+
+function createDbCredentialStore({ safeStorage, dir, platform = process.platform }) {
   const file = path.join(dir, "db-credentials.json");
   const keyOf = (c) => [c.engine || "postgres", String(c.host || "").trim().toLowerCase(), Number(c.port) || "", c.database || "", c.user || ""].join("|");
   const read = () => { try { return JSON.parse(fs.readFileSync(file, "utf8")) || {}; } catch { return {}; } };
@@ -21,10 +27,18 @@ function createDbCredentialStore({ safeStorage, dir }) {
     fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
     fs.renameSync(tmp, file);
   };
-  const available = () => { try { return !!safeStorage?.isEncryptionAvailable(); } catch { return false; } };
+  const available = () => {
+    try {
+      if (!safeStorage?.isEncryptionAvailable()) return false;
+      if (platform === "linux") return !WEAK_LINUX_BACKENDS.has(safeStorage.getSelectedStorageBackend?.() ?? "unknown");
+      return true;
+    } catch { return false; }
+  };
   return {
     available,
-    has: (c) => Object.prototype.hasOwnProperty.call(read(), keyOf(c)),
+    // #640 — "saved" only when it can actually be used: an entry written before the key store went away (or
+    // under a weak backend) would otherwise tell the user to leave the box empty and then fail the login.
+    has: (c) => available() && Object.prototype.hasOwnProperty.call(read(), keyOf(c)),
     get: (c) => {
       const enc = read()[keyOf(c)];
       if (!enc || !available()) return null;
