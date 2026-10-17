@@ -43,3 +43,9 @@ npm-debug.log*
 # for a public repo. Untracked (not deleted) here on request — it still exists locally and code
 # comments still reference "TASKS.csv #N" as their rationale trail, it's just no longer pushed.
 TASKS.csv
+
+# TASKS.csv #638 — the geoML add-on's Python caches and build output
+addons/**/__pycache__/
+addons/geoml/build/
+addons/geoml/dist/
+addons/geoml/venv/
