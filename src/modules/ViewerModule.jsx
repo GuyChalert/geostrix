@@ -57,6 +57,7 @@ const DataQCModal = lazyModal(() => import("../components/DataQCModal.jsx"));  /
 // modal is actually rendered (see the Suspense wrapper at its render site below).
 const SQLWorkspaceModal = React.lazy(() => import("../components/SQLWorkspaceModal.jsx"));
 const SectionGeorefModal = React.lazy(() => import("../components/SectionGeorefModal.jsx")); // TASKS.csv #630
+const LayerStyleModal = React.lazy(() => import("../components/LayerStyleModal.jsx")); // TASKS.csv #635
 const BoundaryInterceptsModal = lazyModal(() => import("../components/BoundaryInterceptsModal.jsx"));  // TASKS.csv #301
 const StripLog = lazyModal(() => import("../components/StripLog.jsx"));  // TASKS.csv #301
 const StereonetModal = lazyModal(() => import("../components/StereonetModal.jsx"));  // TASKS.csv #301
@@ -75,6 +76,7 @@ import { ghostStrings } from "../lib/sectionDigitise.js"; // TASKS.csv #519
 import { trueNorthBearingInGridDeg } from "../lib/inversion.js"; // TASKS.csv #577 (already in the startup chunk via compactRows)
 import { unitShell, meshVolume } from "../lib/unitVolumes.js"; // TASKS.csv #517
 import ModellingCodesPane from "../components/ModellingCodesPane.jsx"; // TASKS.csv #599
+import { resolveLayerStyle, cleanLayerStyle, TUBE_SEGMENTS } from "../lib/layerStyle.js"; // TASKS.csv #635
 import { LAYER_META, colorForLithology, rqdColor, magColor, hashColor, distinctValues, minMax, colorForVoxelValue, makeVoxelColorResolverRGB, roleForLithology, isCrossCuttingRole, colorForMedium, classifyBreaks, paletteColorsHex, PALETTES, CATEGORICAL_SAFE_COLORS } from "../lib/layers.js";
 import { computeMeshVolume, computeTonnage } from "../lib/volumetrics.js";
 import { sceneVertsToWorldFlat } from "../lib/meshFlat.js"; // TASKS.csv #600 — the exporters (meshExport.js) load on first export
@@ -496,6 +498,15 @@ const PROTO_SPHERE_10 = sharedProto(new THREE.SphereGeometry(1, 10, 10), "sph10"
 const PROTO_SPHERE_8 = sharedProto(new THREE.SphereGeometry(1, 8, 8), "sph8");
 const PROTO_SPHERE_12 = sharedProto(new THREE.SphereGeometry(1, 12, 12), "sph12");
 const PROTO_CIRCLE_24 = sharedProto(new THREE.CircleGeometry(1, 24), "circ24");
+// TASKS.csv #635 — the extra shapes a layer style can pick (same unit-size + scale convention, so they batch too)
+const PROTO_CYLINDER_16 = sharedProto(new THREE.CylinderGeometry(1, 1, 1, 16, 1, false).translate(0, 0.5, 0), "cyl16");
+const PROTO_PRISM_4 = sharedProto(new THREE.CylinderGeometry(1, 1, 1, 4, 1, false).rotateY(Math.PI / 4).translate(0, 0.5, 0), "prism4");
+const PROTO_CUBE = sharedProto(new THREE.BoxGeometry(1.6, 1.6, 1.6), "cube"); // ~ the sphere's visual size
+const PROTO_DISC_FLAT = sharedProto(new THREE.CircleGeometry(1.2, 24).rotateX(-Math.PI / 2), "discflat"); // horizontal
+const PROTO_PILLAR = sharedProto(new THREE.CylinderGeometry(0.8, 0.8, 2, 12, 1, false), "pillar"); // vertical, centred
+const PROTO_SQUARE = sharedProto(new THREE.PlaneGeometry(1.8, 1.8), "square"); // ~ the disc's area
+const INTERVAL_PROTO = { cylinder: PROTO_CYLINDER, smooth: PROTO_CYLINDER_16, square: PROTO_PRISM_4 };
+const POINT_PROTO = { sphere: PROTO_SPHERE_10, cube: PROTO_CUBE, disc: PROTO_DISC_FLAT, pillar: PROTO_PILLAR };
 
 const _batchMatrix = new THREE.Matrix4();
 const _batchZero = new THREE.Vector3(0, 0, 0);
@@ -953,6 +964,17 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   const axisLinesRef = useRef([]);
   // TASKS.csv #311 — figure overlay config; see DEFAULT_FIGURE_OVERLAY for the default-on reasoning.
   const [figureOverlay, setFigureOverlay] = useState({ ...DEFAULT_FIGURE_OVERLAY });
+  // TASKS.csv #635 — per-layer style overrides (lib/layerStyle.js), saved in the project's view state like the legend
+  // overrides; styleTarget = the layer whose Style dialog is open; rowMenu = the right-click menu of a non-interval row.
+  const [layerStyles, setLayerStyles] = useState({});
+  const [styleTarget, setStyleTarget] = useState(null); // { key, kind, label, defaults, categoriesKey }
+  const [rowMenu, setRowMenu] = useState(null); // { x, y, title, items: [{ label, onClick } | "-"] }
+  const setLayerStyle = useCallback((key, kind, patch) => setLayerStyles((p) => {
+    const next = { ...p };
+    const c = patch === null ? null : cleanLayerStyle({ ...(p[key] || {}), ...patch }, kind);
+    if (c) next[key] = c; else delete next[key];
+    return next;
+  }, []), []);
   // Set by ViewportFigureOverlay to its own imperative scale-bar updater, and called from
   // updateCamera()/resize() below. Deliberately a ref-held callback rather than React state: a camera
   // move must NOT re-render this module (#312's 142.9 fps is not something to spend on chrome), and
@@ -1524,13 +1546,14 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     CATEGORY_LAYER_KEYS.forEach((key) => {
       const g = groups[key];
       if (!g) return;
+      const single = layerStyles[key]?.color; // TASKS.csv #635 — a one-colour layer style wins over category colours
       g.children.forEach((child) => {
         if (child.userData?.catValue === undefined || !child.material?.color) return;
-        child.material.color.set(effectiveColor(key, child.userData.catValue));
+        child.material.color.set(single || effectiveColor(key, child.userData.catValue));
       });
     });
     syncLayerBatches(CATEGORY_LAYER_KEYS); // TASKS.csv #312 — repaint the batches' instanceColor from the objects just repainted
-  }, [effectiveColor, syncLayerBatches]);
+  }, [effectiveColor, syncLayerBatches, layerStyles]);
 
   // ---------- project save/load: mirror custom layers (plain data) into the store, and
   // reconstruct three.js groups for any custom layers a loaded project brought in ----------
@@ -1575,6 +1598,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       setBgColor(DEFAULT_BG_COLOR);
       setHoleLabelMode("none");
       setFigureOverlay({ ...DEFAULT_FIGURE_OVERLAY }); // TASKS.csv #311
+      setLayerStyles({}); // #635
       return;
     }
     if (s.layerVisible) setLayerVisible({ ...DEFAULT_LAYER_VISIBLE, ...s.layerVisible });
@@ -1595,6 +1619,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     // TASKS.csv #311 — spread over the defaults (not replaced by them) so a project saved before this
     // row existed opens with the overlay on, same as a new one, rather than silently missing it.
     setFigureOverlay({ ...DEFAULT_FIGURE_OVERLAY, ...(s.figureOverlay || {}) });
+    setLayerStyles(s.layerStyles || {}); // #635
   }, [viewerUiStateSeq, viewerUiState, lastCamState]);
 
   // Push local UI state up to the store on every relevant change, so it's captured whenever
@@ -1615,8 +1640,9 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       bgColor,
       holeLabelMode,
       figureOverlay, // TASKS.csv #311
+      layerStyles, // TASKS.csv #635
     });
-  }, [layerVisible, categoryFilter, numericRange, legendOverride, numericSymbology, visibleHoles, customVisible, assayVisible, assayDisplayElements, assayStyle, gridConfig, bgColor, holeLabelMode, figureOverlay, setViewerUiState]);
+  }, [layerVisible, categoryFilter, numericRange, legendOverride, numericSymbology, visibleHoles, customVisible, assayVisible, assayDisplayElements, assayStyle, gridConfig, bgColor, holeLabelMode, figureOverlay, layerStyles, setViewerUiState]);
 
   // Applies bgColor to the live three.js scene whenever it changes — separate from the push-to-store
   // effect above since this one needs sceneRef.current (set up in the big scene-setup effect further
@@ -1664,6 +1690,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       if (!layerVisible[key]) return;
       const rows = layers?.[key] || [];
       if (!rows.length) return;
+      if (layerStyles[key]?.color) { groups.push({ key, label: LAYER_META[key].label, items: [["all (one colour)", layerStyles[key].color]] }); return; } // TASKS.csv #635
       const hidden = categoryFilter[key];
       const seen = new Set();
       const items = [];
@@ -1733,7 +1760,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       }
     }
     return groups;
-  }, [figureOverlay.enabled, figureOverlay.legend, layerVisible, layers, categoryFilter, visibleHoles, effectiveLabel, effectiveColor, assayVisible, assayDisplayElements, assayStyle, assays, assayElements, voxelModels, geophysSurveys, geophysPtsStops, geophysPtsColorMode, geophysPtsMin, geophysPtsMax]);
+  }, [layerStyles, figureOverlay.enabled, figureOverlay.legend, layerVisible, layers, categoryFilter, visibleHoles, effectiveLabel, effectiveColor, assayVisible, assayDisplayElements, assayStyle, assays, assayElements, voxelModels, geophysSurveys, geophysPtsStops, geophysPtsColorMode, geophysPtsMin, geophysPtsMax]);
 
   // TASKS.csv #453 — build the clipping planes from the slice settings over the drilled extent (hole
   // traces; the terrain bbox when there is no drilling). Vertical: across the azimuth line, position along
@@ -4008,7 +4035,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   const buildAssaySpheresRef = useRef(buildAssaySpheres);
   buildAssaySpheresRef.current = buildAssaySpheres;
 
-  const geophysInputs = [layers.geophys_pts, geophysSurveys, geophysPtsStops, geophysPtsColorMode, geophysPtsMin, geophysPtsMax, isRowVisibleForBuild];
+  const geophysInputs = [layers.geophys_pts, geophysSurveys, geophysPtsStops, geophysPtsColorMode, geophysPtsMin, geophysPtsMax, isRowVisibleForBuild, layerStyles.geophys_pts]; // #635 style
   const geophysBuiltRef = useRef(null);
   const buildGeophysPts = () => {
     const g = layerGroupsRef.current.geophys_pts;
@@ -4021,11 +4048,14 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     if (!rows.length) return;
     const colorer = makeSurveyColorer(rows, { stops: geophysPtsStops, colorMode: geophysPtsColorMode, min: geophysPtsMin, max: geophysPtsMax }); // #451 — per survey when several; #122 class breaks
     const errors = [];
+    const st = resolveLayerStyle(layerStyles.geophys_pts, "point"); // TASKS.csv #635
+    const proto = st.shape === "sphere" ? PROTO_SPHERE_8 : POINT_PROTO[st.shape];
     rows.forEach((row) => {
       try {
-        const { color, t } = colorer.colorOf(row);
-        const mesh = new THREE.Mesh(PROTO_SPHERE_8, new THREE.MeshLambertMaterial({ color })); // #312
-        mesh.scale.setScalar(1.4 + 2.8 * t);
+        const { color: c0, t } = colorer.colorOf(row);
+        const color = st.color || c0;
+        const mesh = new THREE.Mesh(proto, new THREE.MeshLambertMaterial({ color, transparent: st.opacity < 1, opacity: st.opacity, side: st.shape === "disc" ? THREE.DoubleSide : THREE.FrontSide })); // #312
+        mesh.scale.setScalar((1.4 + 2.8 * t) * st.size);
         mesh.position.set(row.x - ox, row.z - oz, -(row.y - oy));
         mesh.userData = { tip: `${row._src || "Geophysics point"}${row.line != null ? ` · line ${row.line}` : ""}${row.fid != null ? ` · fid ${row.fid}` : ""}\n${row.label || "value"}: ${row.value}${geophysSurveys?.[row._src]?.units ? ` ${geophysSurveys[row._src].units}` : ""}\n${row.x.toFixed(0)}E ${row.y.toFixed(0)}N ${row.z.toFixed(0)}Z` };
         g.add(mesh);
@@ -4037,7 +4067,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   const buildGeophysPtsRef = useRef(buildGeophysPts);
   buildGeophysPtsRef.current = buildGeophysPts;
 
-  const surfaceInputs = [placedSurfaceSamples, layerVisible.surface_samples];
+  const surfaceInputs = [placedSurfaceSamples, layerVisible.surface_samples, layerStyles.surface_samples]; // #635 style
   const surfaceBuiltRef = useRef(null);
   const buildSurfaceSamples = () => {
     const g = layerGroupsRef.current.surface_samples;
@@ -4048,10 +4078,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     if (!layerVisible.surface_samples || !placedSurfaceSamples.length) return;
     const { x: ox, y: oy, z: oz } = originRef.current;
     const errors = [];
+    const st = resolveLayerStyle(layerStyles.surface_samples, "point"); // TASKS.csv #635
+    const proto = st.shape === "sphere" ? PROTO_SPHERE_8 : POINT_PROTO[st.shape];
     placedSurfaceSamples.forEach((row) => {
       try {
-        const mesh = new THREE.Mesh(PROTO_SPHERE_8, new THREE.MeshLambertMaterial({ color: colorForMedium(row.medium) })); // #312
-        mesh.scale.setScalar(1.8);
+        const mesh = new THREE.Mesh(proto, new THREE.MeshLambertMaterial({ color: st.color || colorForMedium(row.medium), transparent: st.opacity < 1, opacity: st.opacity, side: st.shape === "disc" ? THREE.DoubleSide : THREE.FrontSide })); // #312
+        mesh.scale.setScalar(1.8 * st.size);
         mesh.position.set(row.x - ox, row.z - oz, -(row.y - oy));
         mesh.userData = { tip: surfaceSampleTip(row) };
         g.add(mesh);
@@ -4296,6 +4328,8 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         numericLayerColor(groupKey, value, groupKey === "sg" ? globalPointRanges.sg : { min: 0, max: 100 });
       const buildIntervalTube = (groupKey) => {
         const meta = LAYER_META[groupKey];
+        const st = resolveLayerStyle(layerStyles[groupKey], "interval", { opacity: meta.opacity }); // TASKS.csv #635
+        const radius = meta.radius * st.size;
         (rowsByHole[groupKey]?.get(c.hole_id) || []).filter((r) => isRowVisibleForBuild(groupKey, r)).forEach((row) => {
          try {
           if (!Number.isFinite(row.from) || !Number.isFinite(row.to)) return; // #613 — null (a blank "to" after a JSON round-trip) passed isNaN
@@ -4350,18 +4384,18 @@ export default function ViewerModule({ mode = "view", visible = true }) {
             // straight interval in a layer share ONE InstancedMesh draw call — see PROTO_CYLINDER
             // and buildLayerBatches. Same vertices, same placement; three.js raycasts in local
             // space, so picking is unchanged.
-            geo = PROTO_CYLINDER;
-            const color = meta.numeric ? numericIntervalColor(groupKey, row.value) : baseColorForBuild(groupKey, row.value);
-            const mat = new THREE.MeshLambertMaterial({ color, transparent: meta.opacity < 1, opacity: meta.opacity });
+            geo = INTERVAL_PROTO[st.shape];
+            const color = st.color || (meta.numeric ? numericIntervalColor(groupKey, row.value) : baseColorForBuild(groupKey, row.value));
+            const mat = new THREE.MeshLambertMaterial({ color, transparent: st.opacity < 1, opacity: st.opacity });
             mesh_ = new THREE.Mesh(geo, mat);
-            mesh_.scale.set(meta.radius, len, meta.radius);
+            mesh_.scale.set(radius, len, radius);
             mesh_.position.set(p1.x, p1.y, p1.z);
             mesh_.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len));
           } else {
             const curve = new THREE.CatmullRomCurve3(vecs);
-            geo = new THREE.TubeGeometry(curve, Math.max(2, vecs.length * 2), meta.radius, 6, false);
-            const color = meta.numeric ? numericIntervalColor(groupKey, row.value) : baseColorForBuild(groupKey, row.value);
-            const mat = new THREE.MeshLambertMaterial({ color, transparent: meta.opacity < 1, opacity: meta.opacity });
+            geo = new THREE.TubeGeometry(curve, Math.max(2, vecs.length * 2), radius, TUBE_SEGMENTS[st.shape], false);
+            const color = st.color || (meta.numeric ? numericIntervalColor(groupKey, row.value) : baseColorForBuild(groupKey, row.value));
+            const mat = new THREE.MeshLambertMaterial({ color, transparent: st.opacity < 1, opacity: st.opacity });
             mesh_ = new THREE.Mesh(geo, mat);
           }
           const mesh = mesh_;
@@ -4388,6 +4422,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
 
       const buildPointMarkers = (groupKey) => {
         const meta = LAYER_META[groupKey];
+        const st = resolveLayerStyle(layerStyles[groupKey], "point"); // TASKS.csv #635
         const vals = (rowsByHole[groupKey]?.get(c.hole_id) || []).filter((r) => isRowVisibleForBuild(groupKey, r));
         const { min, max } = globalPointRanges[groupKey] || { min: 0, max: 0 };
         vals.forEach((row) => {
@@ -4396,9 +4431,9 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           const p = findOnTrace(pts, mid);
           if (!p) return;
           const size = meta.numeric ? 1.6 + 3.5 * (max > min ? (row.value - min) / (max - min) : 0.3) : 2 + Math.min(3, (row.extra || 1) * 0.4);
-          const color = meta.numeric ? numericLayerColor(groupKey, row.value, { min, max }) : baseColorForBuild(groupKey, row.value);
-          const mesh = new THREE.Mesh(PROTO_SPHERE_10, new THREE.MeshLambertMaterial({ color })); // TASKS.csv #312 — shared prototype + scale (was SphereGeometry(size, 10, 10))
-          mesh.scale.setScalar(size);
+          const color = st.color || (meta.numeric ? numericLayerColor(groupKey, row.value, { min, max }) : baseColorForBuild(groupKey, row.value));
+          const mesh = new THREE.Mesh(POINT_PROTO[st.shape], new THREE.MeshLambertMaterial({ color, transparent: st.opacity < 1, opacity: st.opacity, side: st.shape === "disc" ? THREE.DoubleSide : THREE.FrontSide })); // TASKS.csv #312 — shared prototype + scale; #635 style
+          mesh.scale.setScalar(size * st.size);
           mesh.position.set(p.x, p.y, p.z);
           const lbl = meta.numeric ? row.value : effectiveLabel(groupKey, row.value);
           mesh.userData = { tip: `${c.hole_id}\n${meta.label}: ${lbl}${row.extra != null ? ` (${row.extra}%)` : ""}\n@ ${mid.toFixed(0)} m`, catValue: row.value };
@@ -4409,6 +4444,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       buildPointMarkers("mnlgy");
       buildPointMarkers("magsusc");
 
+      const stStruct = resolveLayerStyle(layerStyles.structure, "plane", { opacity: 0.55 }); // TASKS.csv #635
       (rowsByHole.structure?.get(c.hole_id) || []).filter((s) => isRowVisibleForBuild("structure", s)).forEach((s) => {
         const p = findOnTrace(pts, s.depth);
         if (!p) return;
@@ -4417,10 +4453,10 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         // "dip 45° / az 0°" as if measured, so alpha-only or unoriented picks looked like real
         // north-dipping planes.
         const oriented = s.dip != null && !isNaN(s.dip) && s.azimuth != null && !isNaN(s.azimuth);
-        const color = baseColorForBuild("structure", s.value);
+        const color = stStruct.color || baseColorForBuild("structure", s.value);
         if (!oriented) {
-          const mark = new THREE.Mesh(PROTO_SPHERE_8, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55 }));
-          mark.scale.setScalar(2.2);
+          const mark = new THREE.Mesh(PROTO_SPHERE_8, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: stStruct.opacity }));
+          mark.scale.setScalar(2.2 * stStruct.size);
           mark.position.set(p.x, p.y, p.z);
           mark.userData = { tip: `${c.hole_id}\nStructure: ${effectiveLabel("structure", s.value)}\norientation not recorded (dip —)\n@ ${s.depth.toFixed(0)} m`, catValue: s.value };
           groups.structure.add(mark);
@@ -4428,10 +4464,10 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         }
         const dip = s.dip;
         const az = s.azimuth;
-        const geo = PROTO_CIRCLE_24; // TASKS.csv #312 — shared prototype + scale (was CircleGeometry(6, 24))
-        const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.55 });
+        const geo = stStruct.shape === "square" ? PROTO_SQUARE : PROTO_CIRCLE_24; // TASKS.csv #312 — shared prototype + scale (was CircleGeometry(6, 24)); #635 shape
+        const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: stStruct.opacity < 1, opacity: stStruct.opacity });
         const disc = new THREE.Mesh(geo, mat);
-        disc.scale.setScalar(6);
+        disc.scale.setScalar(6 * stStruct.size);
         disc.rotation.order = "YXZ";
         disc.rotation.x = Math.PI / 2 - toRad(dip);
         disc.rotation.y = -toRad(az);
@@ -4442,6 +4478,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
       });
 
       customLayers.forEach((layer) => {
+        const stI = resolveLayerStyle(layerStyles[`custom:${layer.id}`], "interval"), stP = resolveLayerStyle(layerStyles[`custom:${layer.id}`], "point"); // TASKS.csv #635
         // TASKS.csv #227 — geometry is now built regardless of customVisible (visibility is toggled
         // cheaply afterward via the layer's own group.visible, see the small effect near layerVisible's
         // own visibility effect) so this rebuild no longer needs to re-run every time a custom layer's
@@ -4450,13 +4487,13 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           if (row.to != null && !isNaN(row.to)) {
             const p1 = findOnTrace(pts, row.from), p2 = findOnTrace(pts, row.to);
             const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(p1.x, p1.y, p1.z), new THREE.Vector3(p2.x, p2.y, p2.z)]);
-            const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 2, 1.6, 6, false), new THREE.MeshLambertMaterial({ color: row.modelColor || hashColor(row.value) })); // #323: a model's own colour
+            const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 2, 1.6 * stI.size, TUBE_SEGMENTS[stI.shape], false), new THREE.MeshLambertMaterial({ color: stI.color || row.modelColor || hashColor(row.value), transparent: stI.opacity < 1, opacity: stI.opacity })); // #323: a model's own colour; #635 style
             mesh.userData = { tip: `${c.hole_id}\n${layer.name}: ${row.value}\n${row.from.toFixed(0)}–${row.to.toFixed(0)} m` };
             layer.group.add(mesh);
           } else if (row.depth != null && !isNaN(row.depth)) {
             const p = findOnTrace(pts, row.depth);
-            const mesh = new THREE.Mesh(PROTO_SPHERE_10, new THREE.MeshLambertMaterial({ color: hashColor(row.value) })); // TASKS.csv #312 — shared prototype + scale
-            mesh.scale.setScalar(2.4);
+            const mesh = new THREE.Mesh(POINT_PROTO[stP.shape], new THREE.MeshLambertMaterial({ color: stP.color || hashColor(row.value), transparent: stP.opacity < 1, opacity: stP.opacity, side: stP.shape === "disc" ? THREE.DoubleSide : THREE.FrontSide })); // TASKS.csv #312 — shared prototype + scale; #635 style
+            mesh.scale.setScalar(2.4 * stP.size);
             mesh.position.set(p.x, p.y, p.z);
             mesh.userData = { tip: `${c.hole_id}\n${layer.name}: ${row.value}\n@ ${row.depth.toFixed(0)} m` };
             layer.group.add(mesh);
@@ -4522,7 +4559,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     // applyCategoryVisibility/applyLegendOverrideColors are deliberately NOT listed either, for the
     // same reason categoryFilter/legendOverride were removed from this array — both are called
     // directly above using whatever this render closed over, not as re-trigger conditions.
-  }, [collars, survey, desurveyMethod /* #135 — switching method must rebuild every trace */, layers, customLayers, numericRange, isRowVisibleForBuild, baseColorForBuild, effectiveLabel, numericLayerColor, fitView, anchorSourcesKey /* #435 — extents only, NOT terrain/rasters/boundaries/omfObjects themselves */, mapAnchorKey /* #316 — extents only, NOT mapLayers: a colour edit must not rebuild every drillhole */, voxelGeomSignature, fitBox, rebuildSeq, placedSurfaceSamples /* #606 — and the no-drillhole camera anchor */, holeLabelMode]); // #551: assay / geophysics-legend / surface-visibility inputs moved to their own builders
+  }, [collars, survey, desurveyMethod /* #135 — switching method must rebuild every trace */, layers, customLayers, numericRange, isRowVisibleForBuild, baseColorForBuild, effectiveLabel, numericLayerColor, fitView, layerStyles /* #635 */, anchorSourcesKey /* #435 — extents only, NOT terrain/rasters/boundaries/omfObjects themselves */, mapAnchorKey /* #316 — extents only, NOT mapLayers: a colour edit must not rebuild every drillhole */, voxelGeomSignature, fitBox, rebuildSeq, placedSurfaceSamples /* #606 — and the no-drillhole camera anchor */, holeLabelMode]); // #551: assay / geophysics-legend / surface-visibility inputs moved to their own builders
   // #551 — declared AFTER the big effect: when both fire, the big one builds first and these then see unchanged inputs
   useEffect(() => { if (!sameInputs(assayBuiltRef.current, assayInputs)) buildAssaySpheresRef.current(); }, assayInputs);
   useEffect(() => { if (!sameInputs(geophysBuiltRef.current, geophysInputs)) buildGeophysPtsRef.current(); }, geophysInputs);
@@ -5660,6 +5697,29 @@ export default function ViewerModule({ mode = "view", visible = true }) {
   };
   const toggleLayer = (key) => setLayerVisible((p) => ({ ...p, [key]: !p[key] }));
   const toggleCustom = (id) => setCustomVisible((p) => ({ ...p, [id]: p[id] === false ? true : false }));
+
+  // TASKS.csv #635 — Matt: "in the 3d view tab we need the right click menu on the geophysics layers, custom, map and
+  // all layers. Also … edit the styles of each layer, colour, size, type (circle, plane, cylinder), etc". Interval /
+  // point / structure / geophysics-point / surface-sample / custom layers get a Style… panel (lib/layerStyle.js);
+  // every sidebar row gets a right-click menu (rowMenu) with the actions that fit it.
+  const styleKindFor = (key) => {
+    if (key === "surface_samples") return "point";
+    const k = LAYER_META[key]?.kind;
+    return k === "interval" ? "interval" : k === "point" || k === "point3d" ? "point" : k === "plane" ? "plane" : null;
+  };
+  const openLayerStyle = (key, label) => {
+    const meta = LAYER_META[key], kind = styleKindFor(key);
+    if (!kind) return;
+    const sizeNote = kind === "interval" ? `Default tube radius ${meta.radius} m.` : kind === "plane" ? "Default disc radius 6 m." : meta?.numeric ? "By default the marker grows with the value; this scales all of them." : null;
+    setStyleTarget({ key, kind, label: label || meta?.label || key, defaults: { opacity: kind === "interval" ? meta.opacity : kind === "plane" ? 0.55 : 1 }, sizeNote, colourKey: meta && !meta.numeric && key !== "geophys_pts" ? key : null });
+  };
+  const openCustomStyle = (l) => {
+    const intervals = (l.rows || []).filter((r) => r.to != null && !isNaN(r.to)).length;
+    const kind = intervals >= (l.rows || []).length / 2 ? "interval" : "point";
+    setStyleTarget({ key: `custom:${l.id}`, kind, label: l.name, defaults: { opacity: 1 }, sizeNote: kind === "interval" ? "Default tube radius 1.6 m." : "Default marker radius 2.4 m." });
+  };
+  const openRowMenu = (e, title, items) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, title, items: items.filter(Boolean) }); };
+  const zoomToObject = (obj) => { if (obj) { const b = new THREE.Box3().setFromObject(obj); if (!b.isEmpty()) fitBox(b); } };
   const toggleCategory = (layerKey, value) => setCategoryFilter((p) => { const cur = new Set(p[layerKey] || []); if (cur.has(value)) cur.delete(value); else cur.add(value); return { ...p, [layerKey]: cur }; });
   const setLegendColor = (layerKey, value, color) => setLegendOverride((p) => ({ ...p, [layerKey]: { ...p[layerKey], [value]: { ...p[layerKey]?.[value], color } } }));
   const setLegendLabel = (layerKey, value, label) => setLegendOverride((p) => ({ ...p, [layerKey]: { ...p[layerKey], [value]: { ...p[layerKey]?.[value], label } } }));
@@ -6780,7 +6840,10 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           <>
             <div className="ge-section-label" style={{ marginTop: 16 }}>Rasters & terrain</div>
             {terrain && (
-              <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+              <div onContextMenu={(e) => openRowMenu(e, terrain.name, [
+                  { label: terrain.visible === false ? "Show" : "Hide", onClick: () => updateTerrain?.({ visible: terrain.visible === false }) },
+                  { label: "Zoom to", onClick: () => zoomToObject(terrainMeshRef.current) },
+                  "-", { label: "Colour, drape and remove — Geophysics tab", onClick: () => goToModule("geophysics") }])} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
                 <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateTerrain?.({ visible: terrain.visible === false })} style={{ cursor: "pointer", color: terrain.visible !== false ? "var(--color-accent)" : "var(--color-text-disabled)", flexShrink: 0 }}>
                   {terrain.visible !== false ? <Eye size={14} /> : <EyeOff size={14} />}
                 </div>
@@ -6799,7 +6862,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
               </div>
             )}
             {rasters.map((r) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+              <div key={r.id} onContextMenu={(e) => openRowMenu(e, r.name, [
+                  { label: r.visible === false ? "Show" : "Hide", onClick: () => updateRaster(r.id, { visible: r.visible === false }) },
+                  { label: "Zoom to", onClick: () => zoomToObject(rasterMeshesRef.current[r.id]) },
+                  "-", { label: "Drape and elevation — Raster tab", onClick: () => goToModule("raster") },
+                  { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove raster "${r.name}"?`)) removeRaster(r.id); } }])} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
                 <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateRaster(r.id, { visible: r.visible === false })} style={{ cursor: "pointer", color: r.visible !== false ? "var(--color-accent)" : "var(--color-text-disabled)", flexShrink: 0 }}>
                   {r.visible !== false ? <Eye size={14} /> : <EyeOff size={14} />}
                 </div>
@@ -6835,7 +6902,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           <>
             <div className="ge-section-label" style={{ marginTop: 16 }}>Geophysics</div>
             {boundaries.map((b) => (
-              <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+              <div key={b.id} onContextMenu={(e) => openRowMenu(e, b.name, [
+                  { label: b.visible === false ? "Show" : "Hide", onClick: () => updateBoundary(b.id, { visible: b.visible === false }) },
+                  { label: "Zoom to", onClick: () => zoomToObject(boundaryLinesRef.current[b.id]) },
+                  "-", { label: "Colour and style — Geophysics tab", onClick: () => goToModule("geophysics") },
+                  { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove boundary "${b.name}"?`)) removeBoundary(b.id); } }])} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
                 <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateBoundary(b.id, { visible: b.visible === false })} style={{ cursor: "pointer", color: b.visible !== false ? "var(--color-accent)" : "var(--color-text-disabled)", flexShrink: 0 }}>
                   {b.visible !== false ? <Eye size={14} /> : <EyeOff size={14} />}
                 </div>
@@ -6847,7 +6918,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
               </div>
             ))}
             {omfObjects.map((o) => (
-              <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+              <div key={o.id} onContextMenu={(e) => openRowMenu(e, o.name, [
+                  { label: o.visible === false ? "Show" : "Hide", onClick: () => updateOmfObject(o.id, { visible: o.visible === false }) },
+                  { label: "Zoom to", onClick: () => zoomToObject(omfMeshesRef.current[o.id]) },
+                  "-", { label: "Colour and style — Geophysics tab", onClick: () => goToModule("geophysics") },
+                  { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove OMF object "${o.name}"?`)) removeOmfObject(o.id); } }])} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
                 <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateOmfObject(o.id, { visible: o.visible === false })} style={{ cursor: "pointer", color: o.visible !== false ? "var(--color-accent)" : "var(--color-text-disabled)", flexShrink: 0 }}>
                   {o.visible !== false ? <Eye size={14} /> : <EyeOff size={14} />}
                 </div>
@@ -6861,7 +6936,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
               </div>
             ))}
             {voxelModels.map((v) => (
-              <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+              <div key={v.id} onContextMenu={(e) => openRowMenu(e, v.name, [
+                  { label: v.visible === false ? "Show" : "Hide", onClick: () => updateVoxelModel(v.id, { visible: v.visible === false }) },
+                  { label: "Zoom to", onClick: () => zoomToObject(voxelMeshesRef.current[v.id]) },
+                  "-", { label: "Legend, classes and palette — Geophysics tab", onClick: () => goToModule("geophysics") },
+                  { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove block/voxel model "${v.name}"?`, { recover: "it would have to be re-imported or re-run." })) removeVoxelModel(v.id); } }])} style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
                 <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateVoxelModel(v.id, { visible: v.visible === false })} style={{ cursor: "pointer", color: v.visible !== false ? "var(--color-accent)" : "var(--color-text-disabled)", flexShrink: 0 }}>
                   {v.visible !== false ? <Eye size={14} /> : <EyeOff size={14} />}
                 </div>
@@ -6886,7 +6965,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
             Geochem, where the import/element data actually lives. */}
         {surfaceSamples.length > 0 && (
           <>
-            <div className="ge-section-label" style={{ marginTop: 16 }}>Surface samples</div>
+            <div onContextMenu={(e) => openRowMenu(e, `${surfaceSamples.length} surface samples`, [
+              { label: layerVisible.surface_samples ? "Hide" : "Show", onClick: () => setLayerVisible((p) => ({ ...p, surface_samples: !p.surface_samples })) },
+              { label: "Zoom to", onClick: () => zoomToObject(layerGroupsRef.current.surface_samples) },
+              { label: "Style (colour, size, shape)…", onClick: () => openLayerStyle("surface_samples", "Surface samples") },
+              "-", { label: "Import or edit samples — Geochem tab", onClick: () => goToModule("geochem") }])} className="ge-section-label" style={{ marginTop: 16 }}>Surface samples</div>
             <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 4 }}>
               <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => setLayerVisible((p) => ({ ...p, surface_samples: !p.surface_samples }))} style={{ cursor: "pointer", color: layerVisible.surface_samples ? "var(--color-accent)" : "var(--color-text-disabled)", flexShrink: 0 }}>
                 {layerVisible.surface_samples ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -6982,7 +7065,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
 
         <div className="ge-section-label" style={{ marginTop: 16 }}>Custom layers</div>
         {customLayers.map((l) => (
-          <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+          <div key={l.id} onContextMenu={(e) => openRowMenu(e, l.name, [
+            { label: customVisible[l.id] === false ? "Show" : "Hide", onClick: () => toggleCustom(l.id) },
+            { label: "Zoom to", onClick: () => zoomToCustom(l.id) },
+            { label: "Style (colour, size, shape)…", onClick: () => openCustomStyle(l) },
+            "-", { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove the custom layer "${l.name}"?`)) removeCustomLayer(l.id); } }])} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
             <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => toggleCustom(l.id)} style={{ cursor: "pointer", flex: 1, fontSize: "var(--font-size-base)", color: customVisible[l.id] === false ? "var(--color-text-disabled)" : "var(--color-text)", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               {customVisible[l.id] === false ? <EyeOff size={14} /> : <Eye size={14} />} <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span> <span style={{ color: "var(--color-text-muted)", fontSize: "var(--font-size-xs)", flexShrink: 0 }}>({l.rows.length})</span>
             </div>
@@ -6999,7 +7086,11 @@ export default function ViewerModule({ mode = "view", visible = true }) {
             show/hide, zoom to, remove. Styling stays in the Geophysics panel (one place for it). */}
         <div className="ge-section-label" style={{ marginTop: 16 }}>Map layers{mapLayers.length ? ` (${mapLayers.length})` : ""}</div>
         {mapLayers.map((l) => (
-          <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+          <div key={l.id} onContextMenu={(e) => openRowMenu(e, l.name, [
+            { label: l.visible === false ? "Show" : "Hide", onClick: () => updateMapLayer(l.id, { visible: l.visible === false }) },
+            { label: "Zoom to", onClick: () => zoomToObject(mapLayerMeshesRef.current[l.id]) },
+            "-", { label: "Colours, labels and draping — Geophysics tab", onClick: () => goToModule("geophysics") },
+            { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove the map layer "${l.name}" from the project?`)) removeMapLayer(l.id); } }])} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
             <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateMapLayer(l.id, { visible: l.visible === false })} title={`${l.visible === false ? "Show" : "Hide"} "${l.name}"${l.crsNote ? `\n${l.crsNote}` : ""}`} style={{ cursor: "pointer", flex: 1, fontSize: "var(--font-size-base)", color: l.visible === false ? "var(--color-text-disabled)" : "var(--color-text)", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               {l.visible === false ? <EyeOff size={14} /> : <Eye size={14} />} <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span> <span style={{ color: "var(--color-text-muted)", fontSize: "var(--font-size-xs)", flexShrink: 0 }}>({l.features.length} {l.geomType})</span>
             </div>
@@ -7014,7 +7105,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         {/* TASKS.csv #630 — georeferenced cross-section images standing in the 3D view */}
         <div className="ge-section-label" style={{ marginTop: 16 }}>Section images{sectionImages.length ? ` (${sectionImages.length})` : ""}</div>
         {sectionImages.map((im) => (
-          <div key={im.id} style={{ padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+          <div key={im.id} onContextMenu={(e) => openRowMenu(e, im.name, [
+            { label: im.visible === false ? "Show" : "Hide", onClick: () => updateSectionImage(im.id, { visible: im.visible === false }) },
+            { label: "Zoom to", onClick: () => zoomToObject(sectionImageMeshesRef.current[im.id]) },
+            { label: "Opaque", onClick: () => updateSectionImage(im.id, { opacity: 1 }) },
+            { label: "Half transparent", onClick: () => updateSectionImage(im.id, { opacity: 0.5 }) },
+            "-", { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove the section image "${im.name}" from the project?`)) removeSectionImage(im.id); } }])} style={{ padding: "6px 8px", background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => updateSectionImage(im.id, { visible: im.visible === false })} title={`${im.visible === false ? "Show" : "Hide"} "${im.name}"${im.rmse != null ? ` (fit error ${im.rmse.toFixed(1)} m)` : ""}`} style={{ cursor: "pointer", flex: 1, fontSize: "var(--font-size-base)", color: im.visible === false ? "var(--color-text-disabled)" : "var(--color-text)", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                 {im.visible === false ? <EyeOff size={14} /> : <Eye size={14} />} <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{im.name}</span>
@@ -7964,7 +8060,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
           const expanded = expandedSurfaceId === s.id;
           const otherSurfaces = implicitSurfaces.filter((o) => o.id !== s.id);
           return (
-            <div key={s.id} style={{ background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
+            <div key={s.id} onContextMenu={(e) => openRowMenu(e, s.name, [ // TASKS.csv #635
+              { label: s.visible ? "Hide" : "Show", onClick: () => toggleImplicitSurface(s.id) },
+              { label: "Zoom to", onClick: () => zoomToImplicitSurface(s.id) },
+              { label: expanded ? "Close type & relationships" : "Type & relationships…", onClick: () => setExpandedSurfaceId(expanded ? null : s.id) },
+              "-", { label: "Remove…", onClick: () => { if (confirmDestructive(`Remove surface "${s.name}"?`, { recover: "getting it back means re-running the model." })) removeImplicitSurface(s.id); } }])}
+              style={{ background: "var(--color-bg-subtle)", border: "1px solid var(--color-border)", borderRadius: 6, marginBottom: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px" }}>
                 <div role="button" tabIndex={0} onKeyDown={activateOnKey} onClick={() => toggleImplicitSurface(s.id)} style={{ cursor: "pointer", color: s.visible ? "var(--color-accent)" : "var(--color-text-disabled)" }}>{s.visible ? <Eye size={14} /> : <EyeOff size={14} />}</div>
                 <div style={{ flex: 1, minWidth: 0, fontSize: "var(--font-size-base)", color: "var(--color-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${s.vertexCount} vertices, ${s.faceCount} faces`}>{s.name}</div>
@@ -8653,6 +8754,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
             {!isVector && <>
               <ContextItem label="Zoom to layer" onClick={() => { zoomToLayer(layerContextMenu.key); setLayerContextMenu(null); }} />
               <ContextItem label={layerVisible[layerContextMenu.key] ? "Hide layer" : "Show layer"} onClick={() => { toggleLayer(layerContextMenu.key); setLayerContextMenu(null); }} />
+              {styleKindFor(layerContextMenu.key) && <ContextItem label="Style (colour, size, shape)…" onClick={() => { openLayerStyle(layerContextMenu.key, layerContextMenu.label); setLayerContextMenu(null); }} />}
               <ContextItem label="Clear layer data…" onClick={() => { clearLayer(layerContextMenu.key); setLayerContextMenu(null); }} />
             </>}
             {/* TASKS.csv — export/inspect, the same for real layers and the collars/survey sentinels. */}
@@ -8689,6 +8791,25 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         );
       })()}
 
+      {rowMenu && ( // TASKS.csv #635
+        <div style={{ position: "fixed", inset: 0, zIndex: 55 }} onClick={() => setRowMenu(null)} onContextMenu={(e) => { e.preventDefault(); setRowMenu(null); }}>
+          <div role="menu" aria-label={`${rowMenu.title} menu`} onClick={(e) => e.stopPropagation()} style={{ position: "fixed", left: Math.max(4, Math.min(rowMenu.x, window.innerWidth - 240)), top: Math.max(4, Math.min(rowMenu.y, window.innerHeight - 44 - rowMenu.items.length * 30)), background: "var(--color-divider)", border: "1px solid var(--color-border-light)", borderRadius: 8, padding: 6, fontSize: "var(--font-size-base)", minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+            <div style={{ padding: "4px 10px 6px", color: "var(--color-text-muted)", fontSize: "var(--font-size-sm)", borderBottom: "1px solid var(--color-border)", marginBottom: 4, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rowMenu.title}</div>
+            {rowMenu.items.map((it, i) => (it === "-"
+              ? <div key={i} style={{ borderTop: "1px solid var(--color-border)", margin: "4px 0" }} />
+              : <ContextItem key={i} label={it.label} onClick={() => { setRowMenu(null); it.onClick(); }} />))}
+          </div>
+        </div>
+      )}
+      {styleTarget && (
+        <Suspense fallback={null}>
+          <LayerStyleModal target={{ ...styleTarget, onEditColours: styleTarget.colourKey ? () => setInspectLayer(styleTarget.colourKey) : null }}
+            style={layerStyles[styleTarget.key]}
+            onChange={(patch) => setLayerStyle(styleTarget.key, styleTarget.kind, patch)}
+            onReset={() => setLayerStyle(styleTarget.key, styleTarget.kind, null)}
+            onClose={() => setStyleTarget(null)} />
+        </Suspense>
+      )}
       {attrTableTarget && (
         <AttributeTableModal
           title={attrTableTarget.label}
