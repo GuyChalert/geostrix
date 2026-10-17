@@ -25,7 +25,7 @@ import { version as APP_VERSION } from "../../package.json"; // TASKS.csv #529
 import InfoButton from "../components/InfoButton.jsx";
 import { fetchSRTMTerrain, collarGroundMisfit, findBetterUtmZone } from "../lib/srtmFetch.js";
 import { toLonLat, reprojectXY, crsName, pointTransform } from "../lib/reproject.js";
-import { parseOMF, omfVolumeToCells } from "../lib/omf.js";
+import { omfToProjectObjects } from "../lib/omfImport.js"; // TASKS.csv #637
 import { parseUBCMesh, parseUBCModelStream, maskAirCells, ubcMeshToCells, cellValueRange, MAX_CELLS, planCoarsenFactors, coarsenUBCModel } from "../lib/voxel.js";
 import { parsePLYBoundary, parseXYZ, guessXyzChannels } from "../lib/geosoft.js";
 import { gemHeaderInfo } from "../lib/diurnal.js";
@@ -604,53 +604,13 @@ export default function GeophysicsModule() {
     setOmfBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      const project = await parseOMF(buf);
-      let pointsCount = 0, linesCount = 0, surfacesCount = 0, volumesCount = 0;
-      const skipped = [];
-      const coarsenNotes = [];
-      for (const el of project.elements) {
-        if (el.kind === "skipped") { skipped.push(`${el.name} (${el.reason})`); continue; }
-        if (el.kind === "points" || el.kind === "lines" || el.kind === "surface") {
-          const hex = el.color ? `#${el.color.slice(0, 3).map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, "0")).join("")}` : undefined;
-          addOmfObject({
-            name: el.name, description: el.description, kind: el.kind,
-            color: hex,
-            origin: el.origin, vertices: el.vertices, segments: el.segments, triangles: el.triangles,
-            attributes: el.attributes,
-          });
-          if (el.kind === "points") pointsCount++; else if (el.kind === "lines") linesCount++; else surfacesCount++;
-        } else if (el.kind === "volume") {
-          // #159 follow-up (real Geosoft export, "resistivity.omf": 126x246x102 = 3,161,592 cells —
-          // over 12x MAX_CELLS): omfVolumeToCells now coarsens internally, same block-averaging
-          // approach as the UBC importer's #158 fix, so this can never hang/crash the 3D view on a
-          // large real-world block model the way it did before this fix.
-          const { cells, attrName, availableAttrs, coarsenNote, colormap, air } = omfVolumeToCells(el, null, effectiveMaxCells);
-          if (!cells.length) {
-            skipped.push(`${el.name} (volume has no numeric cell attribute to render${availableAttrs?.length ? ` — found: ${availableAttrs.join(", ")}, none usable` : ""})`);
-            continue;
-          }
-          const { min, max } = cellValueRange(cells);
-          // User request: "Can we also import the colour legend" — turn the OMF file's own
-          // ScalarColormap gradient (see omf.js's convertColormap) into this app's {value,color} stops,
-          // spread evenly across the colormap's own limits (falling back to this cell set's actual
-          // min/max if the file didn't record limits). Continuous mode matches how OMF itself renders
-          // a gradient legend. If the file had no embedded colormap, leave stops unset — the model
-          // keeps using the original 2-color magColor gradient, unchanged from before this feature.
-          let colorInit = {};
-          if (colormap?.gradient?.length) {
-            const g = colormap.gradient;
-            const [lo, hi] = Array.isArray(colormap.limits) && colormap.limits.length === 2 ? colormap.limits : [min, max];
-            const stops = g.map((color, i) => ({ value: lo + (g.length > 1 ? (i / (g.length - 1)) * (hi - lo) : 0), color }));
-            colorInit = { colorMode: "continuous", stops };
-          } else if (min > 0 && max / min >= 100) {
-            colorInit = { colorMode: "continuous", stops: logStops(min, max, SEQUENTIAL_ANCHORS) }; // #482, as #481
-          }
-          if (air?.count) coarsenNotes.push(`${el.name}: ${air.count.toLocaleString()} cells at ${Number(air.value).toPrecision(3)} (the tiny value this model uses for air above the ground) treated as air (no data).`);
-          addVoxelModel({ name: `${el.name} (${attrName})`, source: "omf", cells, min, max, ...colorInit });
-          volumesCount++;
-          if (coarsenNote) coarsenNotes.push(`${el.name}: ${coarsenNote}`);
-        }
-      }
+      // TASKS.csv #637 — the element conversion lives in lib/omfImport.js (shared with the Woodjam sample project)
+      const res = await omfToProjectObjects(buf, effectiveMaxCells);
+      const pointsCount = res.omfObjects.filter((o) => o.kind === "points").length, linesCount = res.omfObjects.filter((o) => o.kind === "lines").length;
+      const surfacesCount = res.omfObjects.filter((o) => o.kind === "surface").length, volumesCount = res.voxelModels.length;
+      res.omfObjects.forEach((o) => addOmfObject(o));
+      res.voxelModels.forEach((m) => addVoxelModel(m));
+      const skipped = res.skipped, coarsenNotes = res.notes;
       const parts = [];
       if (pointsCount) parts.push(`${pointsCount} point set(s)`);
       if (linesCount) parts.push(`${linesCount} line set(s)`);

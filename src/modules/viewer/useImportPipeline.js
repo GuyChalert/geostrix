@@ -630,30 +630,46 @@ export function useImportPipeline(ctx) {
   // this list: assays belong to the Geochem module's own import path (looksLikeAssay would just
   // reject it here with a notice), and the user is pointed there by the closing notice instead.
   const [sampleLoading, setSampleLoading] = useState(false);
-  const SAMPLE_FILES = ["collars.csv", "litho.csv", "alt.csv", "vein.csv", "mnlgy.csv", "geotech.csv", "magsusc.csv", "structure.csv"];
-  const loadSampleProject = async () => {
-    if (sampleLoading || importActiveRef.current) return;
+  // TASKS.csv #637 — two bundled sample projects; Woodjam's assays / ZTEM model / IP lines are loaded by the caller
+  // (lib/sampleWoodjam.js) — only the drillhole tables go through this queue.
+  const SAMPLES = {
+    harry: {
+      dir: "harry_property", epsg: 3156, crs: "NAD83(CSRS) / UTM zone 9N",
+      files: ["collars.csv", "litho.csv", "alt.csv", "vein.csv", "mnlgy.csv", "geotech.csv", "magsusc.csv", "structure.csv"],
+      notice: "Loading the Harry property sample project — 37 real drillholes from BC's public ARIS database (report #37584), with the interval layers synthesized around the real assay anomalies. See sample_data/harry_property/README.md for exactly what's real vs. synthetic. Assays for these holes can be imported from the Geochem tab (sample_data/harry_property/assay_wide.csv).",
+    },
+    woodjam: {
+      dir: "woodjam", epsg: 26910, crs: "NAD83 / UTM zone 10N",
+      files: ["collars.csv", "survey.csv", "litho.csv", "alt.csv", "vein.csv", "mnlgy.csv", "geotech.csv", "magsusc.csv", "sg.csv", "structure.csv"],
+      notice: "Loading the Woodjam sample project — 19 diamond drillholes from 2023 with their real logs, gyro surveys, oriented structures and assays, plus the 2023 IP lines and ZTEM 3D inversion, all from BC's public assessment report #41597. Nothing in it is synthesized (sample_data/woodjam/README.md).",
+    },
+  };
+  const loadSampleProject = async (which = "harry") => {
+    if (sampleLoading || importActiveRef.current) return false;
+    const S = SAMPLES[which] || SAMPLES.harry;
     setSampleLoading(true);
     try {
-      const files = await loadSampleFiles("harry_property", SAMPLE_FILES);
-      // TASKS.csv #617 — the sample's CRS is known (EPSG:3156, sample_data/harry_property/README.md): set it when the
-      // project's CRS was never chosen, instead of stopping on #615's "which CRS are these collars in?" dialog
+      const files = await loadSampleFiles(S.dir, S.files);
+      // TASKS.csv #617 — the sample's CRS is known: set it when the project's CRS was never chosen, instead of
+      // stopping on #615's "which CRS are these collars in?" dialog
       const live = importStateRef.current;
       if (live.project?.crsSet === false && live.setEpsg) {
-        live.setEpsg(3156);
-        importStateRef.current = { ...live, project: { ...live.project, epsg: 3156, crsSet: true } };
-        setNotices((p) => [...p, "Project CRS set to NAD83(CSRS) / UTM zone 9N (EPSG:3156), the sample project's coordinate system."]);
-      } else if (live.project?.epsg && Number(live.project.epsg) !== 3156) {
-        setNotices((p) => [...p, `The sample project's coordinates are EPSG:3156 (NAD83(CSRS) / UTM zone 9N), but this project is EPSG:${live.project.epsg}: the holes will not line up with anything else in it. Load the sample into a new project.`]);
+        live.setEpsg(S.epsg);
+        importStateRef.current = { ...live, project: { ...live.project, epsg: S.epsg, crsSet: true } };
+        setNotices((p) => [...p, `Project CRS set to ${S.crs} (EPSG:${S.epsg}), the sample project's coordinate system.`]);
+      } else if (live.project?.epsg && Number(live.project.epsg) !== S.epsg) {
+        setNotices((p) => [...p, `The sample project's coordinates are EPSG:${S.epsg} (${S.crs}), but this project is EPSG:${live.project.epsg}: the holes will not line up with anything else in it. Load the sample into a new project.`]);
       }
-      setNotices((p) => [...p, `Loading the Harry property sample project — 37 real drillholes from BC's public ARIS database (report #37584), with the interval layers synthesized around the real assay anomalies. See sample_data/harry_property/README.md for exactly what's real vs. synthetic. Assays for these holes can be imported from the Geochem tab (sample_data/harry_property/assay_wide.csv).`]);
+      setNotices((p) => [...p, S.notice]);
       importActiveRef.current = true;
       batchRowsRef.current = new WeakSet(); // #605
       importQueueTotalRef.current = files.length;
       importQueueRef.current = files;
       processImportQueue();
+      return true;
     } catch (err) {
       setNotices((p) => [...p, `Couldn't load the sample project: ${err.message}`]);
+      return false;
     } finally {
       setSampleLoading(false);
     }

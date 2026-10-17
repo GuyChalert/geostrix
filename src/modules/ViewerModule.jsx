@@ -17,7 +17,7 @@ import { desurveyHole, surveyAzimuthDipAt } from "../lib/desurvey.js";
 import { confirmDestructive } from "../lib/confirmDestructive.js"; // TASKS.csv #386
 import { decodeNoDataMask, isNoData } from "../lib/demFill.js"; // TASKS.csv #421
 import { blockToCells, modelledIntervals, ABOVE_TOPS } from "../lib/modelCheck.js"; // TASKS.csv #356
-import { openSectionWindow, saveFile, copyText } from "../lib/desktop.js"; // copyText: TASKS.csv #589
+import { openSectionWindow, saveFile, copyText, loadSampleFiles } from "../lib/desktop.js"; // copyText: TASKS.csv #589
 import { sectionFromCentre, sectionThroughHole, fenceLines } from "../lib/sectionDefs.js";
 import { Ribbon, RibbonGroup, RibbonButton, TaskPaneHeader, RIBBON_TONES } from "../components/Ribbon.jsx"; // TASKS.csv #458
 import { Layers, Group, Droplets, Waves, Gem, Calculator, Settings, FileSpreadsheet, Globe, Spline, Rows3, Crosshair, Target, SquareSplitVertical, LayoutTemplate } from "../components/icons.js"; // TASKS.csv #445 step 4 — memoised lucide icons // #458 ribbon icons
@@ -684,6 +684,7 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     geophysPtsStops, geophysPtsColorMode, geophysPtsMin, geophysPtsMax,
     geophysSurveys, // TASKS.csv #451
     voxelModels, addVoxelModel, updateVoxelModel, removeVoxelModel,
+    setAssays, setAssayElements, addOmfObject, saveDcipLine, voxelCellBudget, // TASKS.csv #637 — the Woodjam sample's assays / ZTEM / IP
     project,
     layerGroups, addLayerGroup, renameLayerGroup, deleteLayerGroup, toggleLayerGroupCollapsed, setLayerGroupFor,
     excludedIntercepts, toggleExcludedIntercept,
@@ -5667,6 +5668,19 @@ export default function ViewerModule({ mode = "view", visible = true }) {
     setTaskProgress,
     setVisibleHoles,
   });
+  // TASKS.csv #637 — Harry or Woodjam. Woodjam's assays, ZTEM block model and IP lines are not drillhole tables, so they
+  // are loaded here (lib/sampleWoodjam.js, lazily) once its tables are queued.
+  const loadSample = async (which) => {
+    const ok = await loadSampleProject(which);
+    if (!ok || which !== "woodjam") return;
+    try {
+      const { loadWoodjamExtras, WOODJAM_EPSG } = await import("../lib/sampleWoodjam.js");
+      const readFile = async (rel) => (await loadSampleFiles("woodjam", [rel]))[0];
+      const notes = await loadWoodjamExtras(readFile, { setAssays, setAssayElements, addVoxelModel, addOmfObject, saveDcipLine },
+        { projectEpsg: importStateRef.current?.project?.epsg || WOODJAM_EPSG, maxCells: voxelCellBudget || undefined });
+      setNotices((p) => [...p, ...notes]);
+    } catch (e) { setNotices((p) => [...p, `The Woodjam sample's assays, IP and ZTEM could not be loaded: ${e.message}`]); }
+  };
 
   const removeCustomLayer = (id) => { const g = layerGroupsRef.current[id]; if (g) { g.parent?.remove(g); delete layerGroupsRef.current[id]; } setCustomLayers((p) => p.filter((l) => l.id !== id)); };
   // TASKS.csv #222 — useCallback so this keeps a stable identity across renders, required for
@@ -8591,11 +8605,12 @@ export default function ViewerModule({ mode = "view", visible = true }) {
         {!collars.length && !terrain && !rasters.length && !mapLayers.length && !surfaceStructures.length && (
           <EmptyState
             headline={mode === "modeling" ? "Load drillholes first — modelling works from collars, lithology and structure" : mode === "targeting" ? "Load drillholes first — targeting plans holes against your drilling and models" : "Nothing loaded yet"} /* #567 */
-            actionLabel={sampleLoading ? "Loading sample project…" : "Load sample project (Harry property, 37 real holes)"}
-            onAction={loadSampleProject}
+            actionLabel={sampleLoading ? "Loading sample project…" : "Sample: Harry property (37 holes)"}
+            onAction={() => loadSample("harry")}
             actionDisabled={sampleLoading}
             actionTitle="Load the bundled Harry property sample project — 37 real drillholes from BC's public ARIS database, with synthesized interval layers"
-            footnote="No data of your own yet? This loads a real 37-hole dataset from BC's public ARIS drillhole database (report #37584) so you can see what a full project looks like. Some interval layers in it are synthesized — the bundled README says exactly which."
+            secondary={<button type="button" onClick={() => loadSample("woodjam")} disabled={sampleLoading} title="Load the bundled Woodjam sample project — 19 diamond drillholes (2023) with real logs, surveys, oriented structures and assays, six IP lines and the ZTEM 3D inversion, from BC's public assessment report 41597" style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid var(--color-accent)", background: "var(--color-bg)", color: "var(--color-accent-dark)", fontSize: "var(--font-size-base)", fontWeight: 600, cursor: sampleLoading ? "default" : "pointer", opacity: sampleLoading ? 0.6 : 1 }}>Sample: Woodjam (19 holes, IP, ZTEM)</button>}
+            footnote="No data of your own yet? Two real projects from BC's public assessment reports are bundled. Harry (report #37584): 37 holes with assays; some interval layers are synthesized — its README says which. Woodjam (report #41597): 19 holes from 2023 with their real logs, gyro surveys, oriented structures and assays, six IP lines and the ZTEM 3D inversion — nothing synthesized."
           >
             <>
               <div style={{ marginBottom: 8 }}>
