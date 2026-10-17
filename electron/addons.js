@@ -15,7 +15,13 @@ function createAddonManager({ app, net, send }) {
 
   const releaseInfo = (id) => {
     for (const base of [path.join(process.resourcesPath || "", "addons"), path.join(__dirname, "..", "addons")]) {
-      try { return JSON.parse(fs.readFileSync(path.join(base, id, "release.json"), "utf8")); } catch { /* next */ }
+      try {
+        const info = JSON.parse(fs.readFileSync(path.join(base, id, "release.json"), "utf8"));
+        // development builds only: test an add-on zip before it is published (never in an installed GeoStrix)
+        const U = `GEOSTRIX_ADDON_${id.toUpperCase()}`;
+        if (!app.isPackaged && process.env[`${U}_URL`]) Object.assign(info, { url: process.env[`${U}_URL`], sha256: process.env[`${U}_SHA256`] || info.sha256 });
+        return info;
+      } catch { /* next */ }
     }
     return null;
   };
@@ -63,6 +69,10 @@ function createAddonManager({ app, net, send }) {
     const info = releaseInfo(id);
     if (!info?.url || !info.sha256) throw new Error("This add-on has no published download yet.");
     if (installs[id]) throw new Error("Already installing.");
+    // Windows can't load a DLL whose full path passes 260 characters (MAX_PATH), and the add-on nests deep (scikit-learn,
+    // VTK): checked before downloading 600 MB, rather than failing on the first model with "filename too long"
+    const longest = installedDir(id, info).length + 1 + (info.longestPath || 125);
+    if (process.platform === "win32" && longest > 250) throw new Error(`GeoStrix's data folder (${app.getPath("userData")}) has too long a path for this add-on on Windows (${longest} of 250 characters). Please let us know on GitHub.`);
     const state = (installs[id] = { cancelled: false, request: null });
     fs.mkdirSync(root(id), { recursive: true });
     const zip = path.join(root(id), `${info.version}.zip.part`);
@@ -77,11 +87,15 @@ function createAddonManager({ app, net, send }) {
       const dir = installedDir(id, info);
       fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(dir, { recursive: true });
-      // Windows 10+ ships bsdtar, which reads zip files
-      await new Promise((resolve, reject) => execFile("tar", ["-xf", zip, "-C", dir], { windowsHide: true }, (err) => (err ? reject(new Error(`Unpacking failed: ${err.message}`)) : resolve())));
+      // Windows 10 (1803+) ships bsdtar, which reads zip files. Called by its full path: a GNU tar earlier on PATH (Git's
+      // usr/bin) reads "C:" as a remote tape host and can't open zips at all.
+      const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
+      if (process.platform === "win32" && !fs.existsSync(tar)) throw new Error("This version of Windows has no built-in zip extractor (tar.exe, Windows 10 1803 or later).");
+      await new Promise((resolve, reject) => execFile(tar, ["-xf", zip, "-C", dir], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err) => (err ? reject(new Error(`Unpacking failed: ${err.message}`)) : resolve())));
       if (!fs.existsSync(exePath(id, info))) throw new Error("The add-on was unpacked but its program is missing.");
       // older versions of this add-on are removed once the new one is in place
       for (const v of fs.readdirSync(root(id))) if (v !== info.version && !v.endsWith(".log")) fs.rmSync(path.join(root(id), v), { recursive: true, force: true });
+      delete installs[id];
       send({ id, phase: "done" });
       return status(id);
     } finally {

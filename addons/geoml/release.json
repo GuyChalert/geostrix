@@ -1,12 +1,1 @@
-{
-  "id": "geoml",
-  "name": "Predictive modelling (geoML)",
-  "version": "0.1.0",
-  "licence": "GPL-3.0",
-  "port": 8766,
-  "exe": "geostrix-geoml/geostrix-geoml.exe",
-  "url": null,
-  "sha256": null,
-  "bytes": null,
-  "installedBytes": null
-}
+{"id": "geoml", "name": "Predictive modelling (geoML)", "version": "0.1.0", "licence": "GPL-3.0", "port": 8766, "exe": "geostrix-geoml/geostrix-geoml.exe", "url": null, "sha256": null, "bytes": null, "installedBytes": null, "longestPath": 121}

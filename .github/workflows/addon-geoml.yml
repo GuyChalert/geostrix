@@ -1,0 +1,49 @@
+# TASKS.csv #638 — builds and publishes the optional predictive-modelling add-on (addons/geoml, GPL-3.0) as its own
+# GitHub release, "addon-geoml-v<version>". Run by hand (Actions → "Add-on: geoML" → Run workflow). The release is never
+# marked "latest": GeoStrix's own updater reads the latest release, which must stay the app's.
+# After it finishes, copy url / sha256 / bytes / installedBytes / longestPath from the release's release-fields.json into
+# addons/geoml/release.json, so the next GeoStrix release knows where the add-on is and what its checksum must be.
+name: "Add-on: geoML"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the add-on's dependencies
+        working-directory: addons/geoml
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: PyInstaller with a bootloader compiled here (as the main engine, #456)
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: python -m pip install --no-binary pyinstaller pyinstaller
+      - name: Build and zip
+        working-directory: addons/geoml
+        run: python build_addon.py --out "${{ runner.temp }}\addon"
+      - name: Publish the add-on release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $fields = Get-Content "${{ runner.temp }}\addon\release-fields.json" | ConvertFrom-Json
+          $tag = "addon-geoml-v$($fields.version)"
+          $zip = "${{ runner.temp }}\addon\$($fields.file)"
+          $notes = "Optional predictive-modelling add-on for GeoStrix (geoML, GPL-3.0). Installed from inside GeoStrix (Predictive tab) — no need to download it by hand.`n`nSource: addons/geoml in this repository · geoML: https://github.com/italo-goncalves/geoML`n`nsha256: $($fields.sha256)"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title "Predictive modelling add-on $($fields.version)" --notes $notes --latest=false --prerelease }
+          gh release upload $tag $zip "${{ runner.temp }}\addon\release-fields.json" --clobber
+          Write-Host "url: https://github.com/${{ github.repository }}/releases/download/$tag/$($fields.file)"
+          Get-Content "${{ runner.temp }}\addon\release-fields.json"
