@@ -45,6 +45,8 @@ npm run dev
 
 The Python engine for modelling and inversion is optional; see `python-sidecar/README.md`.
 
+On an Android phone or tablet, GeoStrix runs under Termux: see [docs/termux.md](docs/termux.md).
+
 ## License
 
 MIT — see `LICENSE`.
